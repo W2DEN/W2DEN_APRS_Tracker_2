@@ -2,6 +2,8 @@
 * This is W2DEN's attempt at a Teensy3.1 APRS Tracker.
 * This is V 2 adding a menu system to allow user input.
 *
+* Compiler Macro Substitutes (#define) in ALL_CAPS with underline for spaces
+*
 * The bases for this sketch comes from Richard Nash (KC3ARY). Without his code I'd still be searching
 * Also thanks to:
 *
@@ -13,14 +15,26 @@
     Jinseok Jeon (JeonLab.wordpress.com): UTC calculator
     The APRS libraries come from the Trackduino project with modes by many before it got here.
  *
+ *
    */
 #define thisver "2.00" ////////////////////////////////// VERSION
+// these define the starting EEPROM addresses.
+// easier to change these than dig for the constants.
+#define UTC_OFFSET 1
+#define XMIT_TIME  2
+#define MY_CALL    4
+#define MY_SSID   10
+#define DEST_CALL 11
+#define DEST_SSID 17
+#define SYM_TABLE 18
+#define SYMBOL    19
+#define COMMENT   20
 
 // includes
 #include <WProgram.h>
 #include <GPS.h>
 #include <aprs.h>
-#include <EEPROM.h>
+#include <EEPROMex.h> // expanded EEPROM library
 
 // Set up the display
 #include "SPI.h"
@@ -59,15 +73,17 @@ unsigned char rotary_process() {
   return (state & 0x30);
 }
 ///////////////////////////////////////////////////////////// this defines the xmit time interval
-int dTime = 0.25 * 60 * 1000; //Minutes *  seconds * milliseconds
+
+uint16_t dTime = EEPROM.readInt(XMIT_TIME) * 1000; // seconds * milliseconds
 
 //This is for the UTC date correction//////////////////////////////////////////////
-int DSTbegin[] = { //DST 2013 - 2025 in Canada and US
-  310, 309, 308, 313, 312, 311, 310, 308, 314, 313, 312, 310, 309
-};
-int DSTend[] = { //DST 2013 - 2025 in Canada and US
-  1103, 1102, 1101, 1106, 1105, 1104, 1103, 1101, 1107, 1106, 1105, 1103, 1102
-};
+//int DSTbegin[] = { //DST 2013 - 2025 in Canada and US
+// removed for menus
+//  310, 309, 308, 313, 312, 311, 310, 308, 314, 313, 312, 310, 309
+//};
+//int DSTend[] = { //DST 2013 - 2025 in Canada and US
+//  1103, 1102, 1101, 1106, 1105, 1104, 1103, 1101, 1107, 1106, 1105, 1103, 1102
+//};
 int DaysAMonth[] = { //number of days a month
   31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
 };
@@ -104,8 +120,8 @@ struct PathAddress addresses[] = {
 // variables are loaded to each xmit
 //
 int8_t TimeZone;
-char sCall[10];     // holds the s source call
-char dCall[10];     // holds the d destination call
+char sCall[7];     // holds the s source call
+char dCall[7];     // holds the d destination call
 char buf;           // buffer for EEPROM read
 char symTable;      // symbole table \ or //
 char symbol;        // symbol > car etc/
@@ -114,35 +130,43 @@ char myComment[36]; // comments holder
 
 HardwareSerial &gpsSerial = Serial1;
 GPS gps(&gpsSerial, true);
+void mNumChoice(int eePromAddress, int8_t *variable, int lTZ, int uTZ,  int nTZ, String title, String help , uint16_t TTT = 0, uint16_t *variable2 = 0);
+////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////// setup()
+////////////////////////////////////////////////////////////////////////
 void setup()
 {
+
   Serial.begin(9600); // For debugging output over the USB port
   // read the EEPROM user data into memory /// will be updated///////
-  TimeZone = EEPROM.read(1);
-  for (int i = 2; i < 11; i++) { // Source call
+  TimeZone = EEPROM.read(UTC_OFFSET);
+  for (int i = MY_CALL; i < MY_CALL + 7; i++) { // Source call
     buf = EEPROM.read(i);
     if (buf == 32) {
       break;
     }
-    sCall[i - 2] = buf;
+    sCall[i - MY_CALL] = buf;
   }
-  for (int i = 12; i < 21; i++) { //destinationn call
+  for (int i = DEST_CALL; i < DEST_CALL + 7; i++) { //destinationn call
     buf = EEPROM.read(i);
     if (buf == 32) {
       break;
     }
-    dCall[i - 12] = buf;
+    dCall[i - DEST_CALL] = buf;
   }
 
-  for (int i = 24; i < 58; i++) { // comment
+  for (int i = COMMENT; i < COMMENT + 35; i++) { // comment
     buf = EEPROM.read(i);
-    myComment[i - 24] = buf;
+    myComment[i - COMMENT] = buf;
   }
 
-
-  Serial.print(myComment);
-  Serial.println(":OK");
+  //  delay (10000);
+  //  Serial.print(MY_CALL);
+  //  Serial.print(MY_CALL + 7);
+  //  Serial.println(dCall);
+  //  Serial.println(sCall);
+  //  Serial.print(myComment);
+  //  Serial.println(":OK");
   tft.begin();
   tft.fillScreen(ILI9341_BLACK);
   tft.setRotation(0);
@@ -188,11 +212,11 @@ void broadcastLocation(GPS &gps, const char *bcomment)
   // load the user data variables into the addresses[] array for xmit
   //
   addresses[0].callsign = dCall;
-  addresses[0].ssid = EEPROM.read(21);
+  addresses[0].ssid = EEPROM.read(DEST_SSID);
   addresses[1].callsign = sCall;
-  addresses[1].ssid = EEPROM.read(11);
-  symbol =  EEPROM.read(23);
-  symTable =  EEPROM.read(22);
+  addresses[1].ssid = EEPROM.read(MY_SSID);
+  symbol =  EEPROM.read(SYMBOL);
+  symTable =  EEPROM.read(SYM_TABLE);
   if (gps.altitude > 1500) {
     // APRS recomendations for > 5000 feet is:
     // Path: WIDE2-1 is acceptable, but no path is preferred.
@@ -250,7 +274,7 @@ void loop()
   // capture the button press
   if (pushbutton.update()) {
     if (pushbutton.fallingEdge()) {
-      menu();
+      menu(addresses);
     }
   }
   // get GPS data
@@ -272,15 +296,20 @@ void loop()
 /////////////////////////////////////////////////////////////////////////////
 //       FUNCTIONS from here down
 //////////////////////////////////////////////////////////// menu()
-void menu()
+void menu(const PathAddress *  paths)
 {
   // lets set it up
   int mStart = 0;   //First menu item
-  int mEnd   = 2;   // last menu item
+  int mEnd   = 7 ;  // last menu item
   int mPick  = 0;   // menu choice
   int mB4    = 0;    // line # befor move
   //this defines the menu
-  String menu1[] = {"Return", "Send/Return", "UTC Offset"};
+  // makeup some choices...
+  String utcOffSet = "UTC:  " + String(TimeZone);
+  String xmitDelay = "Delay:" + String(dTime / 1000);
+  String ssid1     = "SSID: " + String(paths[1].ssid);
+  String ssid0     = "SSID: " + String(paths[0].ssid);
+  String menu1[] = {"Return", "Send/Return", utcOffSet, xmitDelay, paths[1].callsign, ssid1, paths[0].callsign, ssid0 };
   //now draw it
   tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
@@ -345,85 +374,191 @@ void menu()
             display();
             return;
           case 2: // utc offset set
-            int lTZ = -12;      // lower TZ limit
-            int uTZ = 14;       // upper TZ limit
-            int nTZ = TimeZone; // new TZ
-            tft.fillScreen(ILI9341_BLUE);
-            tft.setTextSize(3);
-            tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
-            tft.setCursor(0, 0);
-            tft.println("UTC Offset");
-            tft.setCursor(0, 25);
-            tft.print("Now: ");
-            tft.print(TimeZone);
-            tft.setCursor(0, 75);
-            tft.print("New: ");
-            tft.setCursor(0, 125);
-            tft.setTextSize(2);
-            tft.println("Rotate to Time Zone");
-            tft.println("Push to accept");
-            tft.println("");
-            tft.println("Standard time in USA");
-            tft.println("DST is automaic");
-            tft.setTextSize(3);
-            tft.setCursor(100, 75);
-            tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
-            tft.print(nTZ);
-            while (true) {
-              if (pushbutton.update()) {                // button pushed
-                if (pushbutton.fallingEdge()) {
-                  if (TimeZone != nTZ) {
-                    TimeZone = nTZ;
-                    EEPROM.update(1, TimeZone);
-                  }
-
-                  tft.fillScreen(ILI9341_BLACK);
-                  display();
-                  return;
-                }
-              }
-              unsigned char result = rotary_process(); // rotated?
-
-              if (result) {
-                if (result == DIR_CCW) {
-                  nTZ--;
-                  if (nTZ < lTZ) {
-                    nTZ = uTZ;
-                  }
-                }
-                else {
-                  nTZ++;
-                  if (nTZ > uTZ) {
-                    nTZ = lTZ;
-                  }
-                }
-                //tft.setTextColor(ILI9341_WHITE,ILI9341_BLUE);
-                //tft.setCursor(0, 75);
-                //tft.print("New: ");
-                tft.setCursor(100, 75);
-                tft.print("   ");
-                tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
-                tft.setCursor(100, 75);
-                tft.print(nTZ);
-              }
-            }
-
-
-
-
-            delay(10000);
-            tft.fillScreen(ILI9341_BLACK);
-
-
-            display();
+            mNumChoice(UTC_OFFSET, &TimeZone, -12, 14, TimeZone, "UTC Offset", "Set to actual offset including DST");
+            return;
+          case 3: // xmit delay
+            mNumChoice(XMIT_TIME, &TimeZone , 10, 600, dTime / 1000 , String("Xmit Delay"), "Seconds between transissions (10-600)", dTime / 1000, &dTime );
+            return;
+          case 4:
+            mCallChoice("My Call:", sCall) ;
             return;
 
-        }
+          case 5:
+            mNumChoice(MY_SSID, &addresses[1].ssid, 0, 15, addresses[1].ssid , String(paths[1].callsign) + "-SSID", "SSID for:" + String(paths[1].callsign) );
+            return;
+          case 6:
+            //mCallChoice();
+            return;
+          case 7:
+            mNumChoice(DEST_SSID, &addresses[0].ssid, 0, 15, addresses[0].ssid , String(paths[0].callsign) + "-SSID", "SSID for:" + String(paths[0].callsign) );
+            return;
+        } // switch end
+      }   // if (pushbutton.update())
+    }     // if (pushbutton.fallingEdge())
+  }       // while (true) end
+}         // end of menu function
+
+////////////////////////////////////////////////////////////mCallChoice
+void mCallChoice(String title, char *vnow) {
+  /*
+   * Menu choice for the two call signs....
+   *
+   */
+  char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 ";
+  Serial.println();
+  Serial.print(alpha[3]);
+  Serial.println();
+  tft.fillScreen(ILI9341_BLUE);
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.setCursor(0, 0);
+  tft.println(title);
+  tft.setCursor(0, 25);
+  tft.print("Now: ");
+  tft.print(vnow);
+  tft.setCursor(0, 75);
+  tft.print("New: ");
+  int8_t letter = 0;
+  tft.setCursor(100, 75);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.print("   ");
+  tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+  tft.setCursor(100, 75);
+  tft.print(alpha[letter]);
+  while (true) {
+    if (pushbutton.update()) {                // button pushed
+      if (pushbutton.fallingEdge()) {
+
+        tft.fillScreen(ILI9341_BLACK);
+        display();
+        return;
       }
     }
-  }
+    unsigned char result = rotary_process(); // rotated?
+    if (result) {
+      if (result == DIR_CCW) {
+        --letter;
+        if (letter < 0) letter = 37;
+      }
+      else {
+        ++letter;
+        if (letter > 37) letter = 0;
+      }
+      tft.setCursor(100, 75);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+      tft.print("   ");
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+      tft.setCursor(100, 75);
+      tft.print(alpha[letter]);
+    }
+    //tft.setTextColor(ILI9341_WHITE,ILI9341_BLUE);
+    //tft.setCursor(0, 75);
+    //tft.print("New: ");
 
+  }
 }
+
+
+////////////////////////////////////////////////////////////mNumChoice
+void mNumChoice(int eePromAddress
+                , int8_t *variable
+                , int lTZ
+                , int uTZ
+                , int nTZ
+                , String title
+                , String help
+                , uint16_t TTT
+                , uint16_t *variable2)
+{
+  /*
+   * Menu choice for numeric entries entries
+   * Pararmaters:
+   *  EEPROM address
+   *  *variable pts to the variable we are changing
+   *  dTime =0 to skip
+   *  lTZ lower limit
+   *  uTZ upper limit
+   *  nTZ current value
+   *  title top of menu item 13 chars max
+   *  help can be multi-line string. 20 chars / line
+   *  TTT optional current time in second !=0 for dTime delay
+   *  *variable optional points to dTime
+   */
+  tft.fillScreen(ILI9341_BLUE);
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.setCursor(0, 0);
+  tft.println(title);
+  tft.setCursor(0, 25);
+  tft.print("Now: ");
+  if (TTT != 0) {
+    tft.print(*variable2 / 1000);
+  }
+  else {
+    tft.print(*variable);
+  }
+  tft.setCursor(0, 75);
+  tft.print("New: ");
+  tft.setCursor(0, 125);
+  tft.setTextSize(2);
+  tft.println("Rotate to New Value");
+  tft.println("Push to accept");
+  tft.println("");
+  tft.println(help);
+  tft.setTextSize(3);
+  tft.setCursor(100, 75);
+  tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+  tft.print(nTZ);
+  while (true) {
+    if (pushbutton.update()) {                // button pushed
+      if (pushbutton.fallingEdge()) {
+        if (TTT != 0) {
+          if (*variable2 != nTZ) { // *variable2 points to dTime
+            *variable2 = nTZ;
+            EEPROM.updateInt(eePromAddress, *variable2);
+            *variable2 = *variable2 * 1000;
+          }
+        }
+        else {
+          if (*variable != nTZ) {
+            *variable = nTZ;
+            EEPROM.update(eePromAddress, *variable);
+          }
+        }
+        tft.fillScreen(ILI9341_BLACK);
+        display();
+        return;
+      }
+    }
+    unsigned char result = rotary_process(); // rotated?
+    if (result) {
+      if (result == DIR_CCW) {
+        if (--nTZ < lTZ) {
+          nTZ = uTZ;
+        }
+      }
+      else {
+        if (++nTZ > uTZ) {
+          nTZ = lTZ;
+        }
+      }
+      //tft.setTextColor(ILI9341_WHITE,ILI9341_BLUE);
+      //tft.setCursor(0, 75);
+      //tft.print("New: ");
+      tft.setCursor(100, 75);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+      tft.print("   ");
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+      tft.setCursor(100, 75);
+      tft.print(nTZ);
+    }
+  }
+  delay(1000);
+  tft.fillScreen(ILI9341_BLACK);
+  display();
+  return;
+}
+
 //////////////////////////////////////////////////////////// displayCountDown()
 void displayCountDown()
 {
@@ -446,8 +581,9 @@ void display()
   gpsHour  = gps.hour;
   gpsHour += TimeZone; // Time zone correction
   // DST fix
-  if (gpsMonth * 100 + gpsDay >= DSTbegin[gpsYear - 13] &&
-      gpsMonth * 100 + gpsDay < DSTend[gpsYear - 13]) gpsHour += 1;
+  // removed now manual fix via menu
+  //  if (gpsMonth * 100 + gpsDay >= DSTbegin[gpsYear - 13] &&
+  //      gpsMonth * 100 + gpsDay < DSTend[gpsYear - 13]) gpsHour += 1;
   if (gpsHour < 0)
   {
     gpsHour += 24;
