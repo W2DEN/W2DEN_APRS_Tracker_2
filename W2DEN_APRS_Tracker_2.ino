@@ -30,7 +30,7 @@
 #define SYM_TABLE 18
 #define SYMBOL    19
 #define COMMENT   20
-#define SBFAST_SPEED 55 // FROM HERE DOWN IS THE sMARTBEACONNING PARAMETERS
+#define SBFAST_SPEED 55 // these are SmartBeaconing eePROM addresses
 #define SBFAST_RATE  57
 #define SBSLOW_SPEED 59
 #define SBSLOW_RATE  61
@@ -81,20 +81,7 @@ unsigned char rotary_process() {
   state = ttable[state & 0xf][pinstate];
   return (state & 0x30);
 }
-
-
-//This is for the UTC date correction//////////////////////////////////////////////
-//int DSTbegin[] = { //DST 2013 - 2025 in Canada and US
-// removed for menus
-//  310, 309, 308, 313, 312, 311, 310, 308, 314, 313, 312, 310, 309
-//};
-//int DSTend[] = { //DST 2013 - 2025 in Canada and US
-//  1103, 1102, 1101, 1106, 1105, 1104, 1103, 1101, 1107, 1106, 1105, 1103, 1102
-//};
-int DaysAMonth[] = { //number of days a month
-  31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-};
-
+int DaysAMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};//number of days a month
 int gpsYear;
 int gpsMonth;
 int gpsDay = 0;
@@ -153,10 +140,10 @@ uint16_t sbMinTurnTime;  //sec
 uint16_t sbMinTurnAngle; //degrees
 uint16_t sbTurnSlope;    //
 
-uint16_t mySpeed   = 0;    // Holds gps.speed for processing
+uint16_t mySpeed   = 0;  // Holds gps.speed for processing
 uint16_t myHeading = 0;
-uint16_t sbSpeed   = 0;    //prior read speed
-uint16_t sbHeading = 0;    // prior heading
+uint16_t sbSpeed   = 0;  //prior read speed
+uint16_t sbHeading = 0;  // prior heading
 //////////////////////// pre set up variables///////////////////////////
 HardwareSerial &gpsSerial = Serial1;
 GPS gps(&gpsSerial, true);
@@ -250,26 +237,38 @@ void loop()
       menu(addresses);
     }
   }
+//    unsigned char result = rotary_process(); // rotated?
+//    if (result) {
+//      if (result == DIR_CCW) {
+//        --mySpeed;
+//      }
+//      else {
+//        ++mySpeed;
+//      }
+//      Serial.println();
+//      Serial.print("mySpeed: ");
+//      Serial.println(mySpeed);
+//    }
+
   // get GPS data
   if (gps.sentenceAvailable()) gps.parseSentence();
-  if (gps.newValuesSinceDataRead()) {     // go here as the seconds tick
+  if (gps.newValuesSinceDataRead()) {         // go here as the seconds tick
     displayCountDown();
     gotGPS = true; // prior validate idea... on the to do list
     gps.dataRead();
-    mySpeed   = round(gps.speed);
-    myHeading = round(gps.heading);
+    mySpeed   = round(gps.speed * knotToMPH); // convert knots to MPH and store.
+    myHeading = round(gps.heading);           // store the heading
     // SmartBeacon... my way
-    if ((sbSpeed != mySpeed)) { // was speed changed?????
-      sbSpeed = mySpeed; //store the new speed. not sure this is used.
+    if ((sbSpeed != mySpeed)) {               // was speed changed?????
       //go if something changed
       if ((mySpeed > sbSlowSpeed) && (mySpeed < sbFastSpeed)) {
-        dTime = (((sbFastSpeed / mySpeed) * (sbFastRate)) * 1000) - (millis() - timeOfAPRS);
+        dTime = (( ( float(sbFastSpeed) / float(mySpeed) ) * (sbFastRate)) * 1000); // - (millis() - timeOfAPRS);
       }
-      if (gps.speed >= sbFastSpeed) { // are we above the fast level
-        dTime = (sbFastRate * 1000) - (millis() - timeOfAPRS);
+      if (mySpeed >= sbFastSpeed) {         // are we above the fast level
+        dTime = (sbFastRate * 1000);        // - (millis() - timeOfAPRS);
       }
     }
-    if (sbHeading != myHeading) { // was heading changed?????????
+    if (sbHeading != myHeading) {             // was heading changed?????????
       uint16_t sbTurnThreshold = sbMinTurnAngle + (sbTurnSlope / mySpeed); // smartbeacon formula
       //  do we send beacon for a direction change??
       int dif = sbHeading - myHeading;
@@ -301,8 +300,9 @@ void loop()
     broadcastLocation(gps, myComment );
     timeOfAPRS = millis(); // reset the timer
     sbHeading = gps.heading; // reset the heading milestone.
+    sbSpeed = gps.speed * knotToMPH; //store the new speed.
     //Serial.printf("dTime: %d gps.speed: %f sbSpeed %f sbSlowrate: %d\n\r", dTime, gps.speed, sbSpeed , sbSlowRate);
-    // SmartBeacon speed < low speed test and ajust as needed.
+    // SmartBeacon speed < low speed test and adjust as needed.
     if (gps.speed < sbSlowSpeed && sbSpeed < sbSlowSpeed && dTime < (sbSlowRate * 1000) ) {
       dTime = 2 * dTime;
       if (dTime > (sbSlowRate * 1000) ) dTime = sbSlowRate * 1000;
@@ -338,10 +338,6 @@ void sbMenu()
   tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
   tft.setCursor(0, 0);
   tft.println("   Menu");
-  //tft.setCursor(160, 0);
-  //tft.print("  ");
-  //tft.setCursor(160, 0);
-  //tft.print(mPick);
   for (int i = mStart; i <= mEnd; i++) {
     tft.setCursor(0, (i + 1) * 25);
     if (i == mPick) {
@@ -412,11 +408,6 @@ void sbMenu()
     }     // if (pushbutton.fallingEdge())
   }       // while (true) end
 }         // end of menu function
-
-
-
-
-
 
 ///////////////////////////////////////////////////////////////////// menu()
 
@@ -843,34 +834,18 @@ void displayCountDown()
   tft.setTextSize(2);
   tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
   tft.setCursor(170, 0);
-  tft.print("     ");
-  tft.setCursor(170, 0);
   uint32_t tLeft = (dTime - (millis() - timeOfAPRS)) / 1000;
-  if (tLeft > 60) {
-    int mod = (tLeft % 60);
-    tLeft = tLeft / 60;
-    tft.print(tLeft );
-    tft.print(":");
-    tft.print(mod);
-    //tft.print("s");
-  }
-  else {
-    tft.print(tLeft );
-  }
-  tft.setCursor(170, line * 1);
-  tft.print("     ");
+  int sec = tLeft % 60;
+  int min = tLeft / 60;
+  char buf[6];
+  sprintf( buf, "%2d:%2d", min, sec);
+  tft.print(buf);
   tft.setCursor(170, line * 1);
   tLeft = dTime / 1000;
-  if (tLeft > 60) {
-    int mod = (tLeft % 60);
-    tLeft = tLeft / 60;
-    tft.print(tLeft );
-    tft.print(":");
-    tft.print(mod);
-  }
-  else {
-    tft.print(tLeft );
-  }
+  sec = tLeft % 60;
+  min = tLeft / 60;
+  sprintf( buf, "%2d:%2d", min, sec);
+  tft.print(buf);
 }
 ///////////////////////////////////////////////////////////////// display()
 void display()
@@ -946,22 +921,18 @@ void display()
     tft.println(" E");
   }
   tft.setTextSize(3);
-  tft.setCursor(0, line * 7);
+  tft.setCursor(60, line * 7);
   tft.setTextColor(ILI9341_MAGENTA, ILI9341_BLACK);
   tft.setTextSize(4);
-  tft.print("          ");
-  tft.setCursor(0, line * 7);
-  printStr(String(round(gps.speed * knotToMPH ) ), 5, false); //
-  tft.setTextSize(3);
-  printStr(" mph", 4, true);
-  tft.setCursor(0, line * 9);
+  char buf[6];
+  //sprintf( buf, "%2d MPH", int(mySpeed ));// for testing
+  sprintf( buf, "%2d MPH", int(round(gps.speed * knotToMPH) ));
+  tft.print(buf);
+  tft.setCursor(40, line * 9);
   tft.setTextSize(4);
-  tft.print("          ");
-  tft.setTextSize(3);
-  tft.setCursor(0, line * 9);
   tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
-  printStr(round(gps.heading), 4, false);
-  printStr(" deg", 4, true);
+  sprintf( buf, "%3d deg", int(round(gps.heading) ));
+  tft.print(buf);
   tft.setCursor(0, 280);
   tft.setTextSize(2);
   printStr("Sats:", 6, false);
