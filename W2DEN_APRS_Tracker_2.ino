@@ -30,13 +30,19 @@
 #define SYM_TABLE 18
 #define SYMBOL    19
 #define COMMENT   20
-#define SBFAST_SPEED 55 // these are SmartBeaconing eePROM addresses
-#define SBFAST_RATE  57
-#define SBSLOW_SPEED 59
-#define SBSLOW_RATE  61
-#define SBTURN_TIME  63
-#define SBTURN_ANGLE 65
-#define SBTURN_SLOPE 67
+#define SB_ENABLE    55 // these are SmartBeaconing eePROM addresses
+#define SBFAST_SPEED 56
+#define SBFAST_RATE  58
+#define SBSLOW_SPEED 60
+#define SBSLOW_RATE  62
+#define SBTURN_TIME  64
+#define SBTURN_ANGLE 66
+#define SBTURN_SLOPE 68
+#define AXDELAY      70
+#define AXFLAGS      72
+#define AXVOXON      74
+#define AXVOXSILENT  76
+#define PTT_PIN      78
 
 #define NUM_SYMBOLS 10 // number of symbols in the symbols[] table
 
@@ -90,7 +96,7 @@ int gpsHour;
 ////////////////////////////////////////////////////////////////////////////////
 
 // Define the I/O pins
-#define PTT_PIN 13 // Push to talk pin
+//#define PTT_PIN 13 // Push to talk pin tis is now eePROM
 #define ROTARY_PIN1 5
 #define ROTARY_PIN2 6
 #define BUTTONPIN   4
@@ -132,6 +138,7 @@ const char* symbols [][9] = { //table of symbols
   {"PwrBoat", "/", "s"},
   {"School", "/", "K"}
 };
+int8_t   sbEnable;       // use sb or not
 uint16_t sbFastSpeed;    //mph speeds stored and compared as integers tostop oscilatting
 uint16_t sbFastRate;     //seconds
 uint16_t sbSlowSpeed;    // mph as integer
@@ -139,6 +146,11 @@ uint16_t sbSlowRate;
 uint16_t sbMinTurnTime;  //sec
 uint16_t sbMinTurnAngle; //degrees
 uint16_t sbTurnSlope;    //
+uint16_t axDelay;        // milliseconds
+uint16_t axFlags;        // number of flags to send
+uint16_t axVoxOn;        // mseconds vox tone sent to xmitter 0 for off
+uint16_t axVoxSilent;    // mseconds VOX tone silent  0 for off
+uint16_t pttPin;         // PTT Teensy Pin usually 13, 0 for off
 
 uint16_t mySpeed   = 0;  // Holds gps.speed for processing
 uint16_t myHeading = 0;
@@ -148,8 +160,8 @@ uint16_t sbHeading = 0;  // prior heading
 HardwareSerial &gpsSerial = Serial1;
 GPS gps(&gpsSerial, true);
 void mNumChoice(int eePromAddress, int8_t *variable, int lTZ, int uTZ,  int nTZ, String title, String help , uint16_t TTT = 0, uint16_t *variable2 = 0);
-uint32_t dTime;
 
+uint32_t dTime;
 uint32_t timeOfAPRS = 0;
 bool gotGPS = false;
 
@@ -183,6 +195,7 @@ void setup()
   }
   // now the SmartBeacon parameters...
   // 16 bit allows menu compatability
+  sbEnable       = EEPROM.read(SB_ENABLE);
   sbFastSpeed    = EEPROM.readInt(SBFAST_SPEED);  //mph speeds stored and compared as integers tostop oscilatting
   sbFastRate     = EEPROM.readInt(SBFAST_RATE);    //seconds
   sbSlowSpeed    = EEPROM.readInt(SBSLOW_SPEED);     // mph as integer
@@ -190,6 +203,11 @@ void setup()
   sbMinTurnTime  = EEPROM.readInt(SBTURN_TIME);  //sec
   sbMinTurnAngle = EEPROM.readInt(SBTURN_ANGLE); //degrees
   sbTurnSlope    = EEPROM.readInt(SBTURN_SLOPE);   //
+  axDelay        = EEPROM.readInt(AXDELAY);    // milliseconds
+  axFlags        = EEPROM.readInt(AXFLAGS);    // number of flags to send
+  axVoxOn        = EEPROM.readInt(AXVOXON );    // mseconds vox tone sent to xmitter 0 for off
+  axVoxSilent    = EEPROM.readInt(AXVOXSILENT);   // mseconds VOX tone silent  0 for off
+  pttPin         = EEPROM.readInt(PTT_PIN);   // PTT Teensy Pin usually 13, 0 for off
 
   tft.begin();
   tft.fillScreen(ILI9341_BLACK);
@@ -202,32 +220,45 @@ void setup()
   tft.println("Tracker");
   tft.println("Loading ...");
 
+  // start the GPS polling and wait for valid data... may take 15+ seconds
   gps.startSerial(9600);
-  delay(1000);
   gps.setSentencesToReceive(OUTPUT_RMC_GGA);
   rotary_init(); // initialize the rotary
   // Set up the APRS module
-  aprs_setup(50, // number of preamble flags to send
-             PTT_PIN, // Use PTT pin
-             500, // ms to wait after PTT to transmit
-             0, 0 // No VOX ton
+  aprs_setup(AXFLAGS, // number of preamble flags (FLAG) (Hex: 0x7e, ASCII: ~, Binary: 01111110 )to send
+             PTT_PIN, // Use PTT pin (=0 for VOX)
+             AXDELAY, // ms to wait after PTT to transmit
+             AXVOXON, AXVOXSILENT // VOX: tone length, silence length
             );
 
+#define AX_DELAY     70
+#define AX_FLAGS  72
+#define AX_VOXTONE   74
+#define AX_VOXSILENT 76
+  // wait for a GPS sentence
   while (!(gps.sentenceAvailable())) {
     delay(1000);
   }
   gps.parseSentence();
-  //Serial.print("APRS Initial");
-  //Serial.printf("Location: %f, %f altitude %f\n\r", gps.latitude, gps.longitude, gps.altitude);
   gps.dataRead();
+  //  // only proced if the dates are valid
+  //  while (gps.month <= 0 || gps.day <= 0 || gps.year <= 0 || gps.speed > 0) {
+  //    if (gps.sentenceAvailable()) gps.parseSentence();
+  //    if (gps.newValuesSinceDataRead())
+  //      gps.dataRead();
+  //    tft.print(".");
+  //    delay(1000);
+  //  }
+  // now data should be stable. Get set and enter the loop
+  timeOfAPRS = millis();
+  sbSpeed   = gps.speed;  //prior read speed
+  sbHeading = gps.heading;
+  myHeading = sbHeading;
   broadcastLocation(gps, myComment);
   tft.fillScreen(ILI9341_BLACK);
   display();
 }
 
-
-// the loop() method runs over and over again,
-// as long as the board has power
 ////////////////////////////////////////////////////////////////////// loop()
 void loop()
 {
@@ -237,57 +268,60 @@ void loop()
       menu(addresses);
     }
   }
-//    unsigned char result = rotary_process(); // rotated?
-//    if (result) {
-//      if (result == DIR_CCW) {
-//        --mySpeed;
-//      }
-//      else {
-//        ++mySpeed;
-//      }
-//      Serial.println();
-//      Serial.print("mySpeed: ");
-//      Serial.println(mySpeed);
-//    }
+  //    unsigned char result = rotary_process(); // rotated?
+  //    if (result) {
+  //      if (result == DIR_CCW) {
+  //        --mySpeed;
+  //      }
+  //      else {
+  //        ++mySpeed;
+  //      }
+  //      Serial.println();
+  //      Serial.print("mySpeed: ");
+  //      Serial.println(mySpeed);
+  //    }
 
   // get GPS data
   if (gps.sentenceAvailable()) gps.parseSentence();
   if (gps.newValuesSinceDataRead()) {         // go here as the seconds tick
     displayCountDown();
-    gotGPS = true; // prior validate idea... on the to do list
     gps.dataRead();
-    mySpeed   = round(gps.speed * knotToMPH); // convert knots to MPH and store.
-    myHeading = round(gps.heading);           // store the heading
-    // SmartBeacon... my way
-    if ((sbSpeed != mySpeed)) {               // was speed changed?????
-      //go if something changed
-      if ((mySpeed > sbSlowSpeed) && (mySpeed < sbFastSpeed)) {
-        dTime = (( ( float(sbFastSpeed) / float(mySpeed) ) * (sbFastRate)) * 1000); // - (millis() - timeOfAPRS);
-      }
-      if (mySpeed >= sbFastSpeed) {         // are we above the fast level
-        dTime = (sbFastRate * 1000);        // - (millis() - timeOfAPRS);
-      }
-    }
-    if (sbHeading != myHeading) {             // was heading changed?????????
-      uint16_t sbTurnThreshold = sbMinTurnAngle + (sbTurnSlope / mySpeed); // smartbeacon formula
-      //  do we send beacon for a direction change??
-      int dif = sbHeading - myHeading;
-      dif = abs(dif);
-      if (abs(dif) > 180) {
-        dif = dif - 360;
-      }
-      dif = abs(dif);
-      if (dif > sbTurnThreshold) {                              //did we trun enough?
-        if (((millis() - timeOfAPRS) / 1000) > sbMinTurnTime) { //did enough time pass?
-          timeOfAPRS = millis() - dTime;        // set the tme so we xmit
-          sbHeading = myHeading;
+    if (sbEnable) {
+      gotGPS = true; // prior validate idea... on the to do list
+      mySpeed   = round(gps.speed * knotToMPH); // convert knots to MPH and store.
+      myHeading = round(gps.heading);           // store the heading
+      // SmartBeacon... my way
+      if ((sbSpeed != mySpeed)) {               // was speed changed?????
+        //go if something changed
+        if ((mySpeed > sbSlowSpeed) && (mySpeed < sbFastSpeed)) {
+          dTime = (( ( float(sbFastSpeed) / float(mySpeed) ) * (sbFastRate)) * 1000); // - (millis() - timeOfAPRS);
         }
-        else {
-          Serial.println("not enuf time... reset");
-          sbHeading = myHeading;              //not enough time so reset the heading and move on
+        if (mySpeed >= sbFastSpeed) {         // are we above the fast level
+          dTime = (sbFastRate * 1000);        // - (millis() - timeOfAPRS);
         }
       }
+      if (sbHeading != myHeading) {             // was heading changed?????????
+        uint16_t sbTurnThreshold = sbMinTurnAngle + (sbTurnSlope / mySpeed); // smartbeacon formula
+        //  do we send beacon for a direction change??
+        int dif = sbHeading - myHeading;
+        dif = abs(dif);
+        if (abs(dif) > 180) {
+          dif = dif - 360;
+        }
+        dif = abs(dif);
+        if (dif > sbTurnThreshold) {                              //did we trun enough?
+          if (((millis() - timeOfAPRS) / 1000) > sbMinTurnTime) { //did enough time pass?
+            timeOfAPRS = millis() - dTime;        // set the tme so we xmit
+            sbHeading = myHeading;
+          }
+          else {
+            Serial.println("not enuf time... reset");
+            sbHeading = myHeading;              //not enough time so reset the heading and move on
+          }
+        }
+      }
     }
+
 
     display();
     //Serial.printf("Sec: %d Heading %d Knots: %f\n\r", gps.seconds, gps.heading, gps.speed);
@@ -299,13 +333,16 @@ void loop()
   if (gotGPS && timeOfAPRS + dTime < millis()) {
     broadcastLocation(gps, myComment );
     timeOfAPRS = millis(); // reset the timer
-    sbHeading = gps.heading; // reset the heading milestone.
-    sbSpeed = gps.speed * knotToMPH; //store the new speed.
+
     //Serial.printf("dTime: %d gps.speed: %f sbSpeed %f sbSlowrate: %d\n\r", dTime, gps.speed, sbSpeed , sbSlowRate);
     // SmartBeacon speed < low speed test and adjust as needed.
-    if (gps.speed < sbSlowSpeed && sbSpeed < sbSlowSpeed && dTime < (sbSlowRate * 1000) ) {
-      dTime = 2 * dTime;
-      if (dTime > (sbSlowRate * 1000) ) dTime = sbSlowRate * 1000;
+    if (sbEnable) {
+      sbHeading = gps.heading; // reset the heading milestone.
+      sbSpeed = gps.speed * knotToMPH; //store the new speed.
+      if (gps.speed < sbSlowSpeed && sbSpeed < sbSlowSpeed && dTime < (sbSlowRate * 1000) ) {
+        dTime = 2 * dTime;
+        if (dTime > (sbSlowRate * 1000) ) dTime = sbSlowRate * 1000;
+      }
     }
     display();
   }
@@ -316,28 +353,116 @@ void loop()
 //
 //       FUNCTIONS from here down
 //
-////////////////////////////////////////////////////////////////////sbMenu
-void sbMenu()
+////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////// menu()
+
+void menu(const PathAddress *  paths) {
+  {
+    // lets set it up
+    int mStart = 0;   //First menu item
+    int mEnd   = 4 ;  // last menu item
+    int mPick  = 0;   // menu choice
+    int mB4    = 0;   // line # befor move
+    //this defines the menu
+    String menu1[] = {"Return", "Send/Return", "Packet", "AX.25", "SmartBeacon" };
+    //now draw it
+    tft.fillScreen(ILI9341_BLUE);
+    tft.setTextSize(3);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+    tft.setCursor(0, 0);
+    tft.println("Main  Menu");
+    //tft.setCursor(160, 0);
+    //tft.print("  ");
+    //tft.setCursor(160, 0);
+    //tft.print(mPick);
+    for (int i = mStart; i <= mEnd; i++) {
+      tft.setCursor(0, (i + 1) * 25);
+      if (i == mPick) {
+        tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+      }
+      else
+      {
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+      }
+      //tft.print(String(i) + " ");
+      tft.print(menu1[i]);
+    }
+    // now loop looking for a rotation or a button press
+    while (true)
+    {
+      unsigned char result = rotary_process(); // rotated?
+      if (result) {                            // the button was rotated
+        if (result == DIR_CCW) {               // highlight the next choice
+          if (--mPick < mStart) mPick = mEnd;
+        }
+        else {
+          if (++mPick > mEnd) mPick = mStart;
+        }
+        Serial.printf("mPick: %i, mB4: %i\n\r", mPick, mB4);
+        tft.setCursor(0, (mB4 + 1) * 25);
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+        //tft.print(String(mB4) + " ");
+        tft.print(menu1[mB4]);
+        tft.setCursor(0, (mPick + 1) * 25);
+        tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+        //tft.print(String(mPick) + " ");
+        tft.print(menu1[mPick]);
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+        mB4 = mPick;
+      }
+      if (pushbutton.update()) {                // button pushed
+        if (pushbutton.fallingEdge()) {
+          switch (mPick) {                      //handle the button push
+            case 0:  // return
+              tft.fillScreen(ILI9341_BLACK);
+              display();
+              return;
+            case 1:  // send and return
+              gps.dataRead();
+              broadcastLocation(gps, myComment );
+              tft.fillScreen(ILI9341_BLACK);
+              timeOfAPRS = millis();
+              display();
+              return;
+            case 2: // sendMenu
+              packetMenu(paths);
+              return;
+            case 3: // sendMenu
+              ax25Menu();
+              return;
+            case 4: // SmartBeacon Menu
+              sbMenu();
+              return;
+          } // switch end
+        }   // if (pushbutton.update())
+      }     // if (pushbutton.fallingEdge())
+    }       // while (true) end
+  }         // end of menu function
+}
+
+/////////////////////////////////////////////////////////// AX25Menu()
+void ax25Menu()
 {
   // lets set it up
   int mStart = 0;   //First menu item
-  int mEnd   = 7 ;  // last menu item
+  int mEnd   = 5 ;  // last menu item
   int mPick  = 0;   // menu choice
-  int mB4    = 0;   // line # befor move
-  String fastSpeed  = "fSpd :" + String(sbFastSpeed);
-  String fastRate   = "fRate:" + String(sbFastRate);
-  String slowSpeed  = "sSpd :" + String(sbSlowSpeed);
-  String slowRate   = "sRate:" + String(sbSlowRate);
-  String mTurnTime  = "tTime:" + String(sbMinTurnTime);
-  String mTurnAngle = "tAgle:" + String(sbMinTurnAngle);
-  String turnSlope  = "Slope:" + String(sbTurnSlope);
-  String menu1[] = {"Return", fastSpeed, fastRate, slowSpeed, slowRate, mTurnTime, mTurnAngle, turnSlope };
+  int mB4    = 0;   // line # before move
+
+  String maxDelay      = "Xmit Delay:" + String(axDelay);
+  String maxFlags      = "# of Flags:" + String(axFlags);
+  String maxVoxOn      = "VOX on:" + String(axVoxOn);
+  String maxVoxSilent  = "VOX off :" + String(axVoxSilent);
+  String mpttPin       = "PTT Pin:" + String(pttPin);
+
+  String menu1[] = {"Return", maxDelay, maxFlags, maxVoxOn, maxVoxSilent, mpttPin };
   //now draw it
   tft.fillScreen(ILI9341_CYAN);
   tft.setTextSize(3);
   tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
   tft.setCursor(0, 0);
-  tft.println("   Menu");
+  tft.println("AX.25 Menu");
   for (int i = mStart; i <= mEnd; i++) {
     tft.setCursor(0, (i + 1) * 25);
     if (i == mPick) {
@@ -381,26 +506,131 @@ void sbMenu()
             tft.fillScreen(ILI9341_BLACK);
             display();
             return;
-          case 1: // FastSpeed
-            mNumChoice(SBFAST_SPEED, &TimeZone , 10, 100, sbFastSpeed , String("Fast Speed"), "Smartbeacon", sbFastSpeed, &sbFastSpeed);
+          case 1: // xmit delay
+            mNumChoice(AXDELAY, &TimeZone , 10, 1000, axDelay , String("Xmit Delay"), "Xmit Delay", axDelay, &axDelay);
             return;
-          case 2:
-            mNumChoice(SBFAST_RATE, &TimeZone , 10, 600, sbFastRate , String("Fast Rate"), "Smartbeacon", sbFastRate, &sbFastRate);
-            return;
-          case 3:
-            mNumChoice(SBSLOW_SPEED, &TimeZone , 1, 20, sbSlowSpeed , String("Slow Speed"), "Smartbeacon", sbSlowSpeed, &sbSlowSpeed);
+          case 2: // flags
+            mNumChoice(AXFLAGS, &TimeZone , 1, 100, axFlags , String("Flags"), "Flags", axFlags, &axFlags);
             return;
           case 4:
-            mNumChoice(SBSLOW_RATE, &TimeZone , 1000, 5000, sbSlowRate , String("Slow Rate"), "Smartbeacon", sbSlowRate, &sbSlowRate);
+            mNumChoice(AXVOXON, &TimeZone , 0, 1000, axVoxOn , String("VOX On"), "VOX On", axVoxOn, &axVoxOn);
             return;
           case 5:
-            mNumChoice(SBTURN_TIME, &TimeZone , 5, 30, sbMinTurnTime , String("Min. Turn Time"), "Smartbeacon", sbMinTurnTime, &sbMinTurnTime);
+            mNumChoice(AXVOXSILENT, &TimeZone , 0, 1000, axVoxSilent , String("VOX Silent"), "VOX Silent", axVoxSilent, &axVoxSilent);
             return;
           case 6:
-            mNumChoice(SBTURN_ANGLE, &TimeZone , 5, 30, sbMinTurnAngle , String("Min. Turn Angle"), "Smartbeacon", sbMinTurnAngle, &sbMinTurnAngle);
-
+            mNumChoice(PTT_PIN , &TimeZone , 0, 23, pttPin , String("PTT Pin #"), "PTT Pin", pttPin, &pttPin);
             return;
-          case 7: // SmartBeacon Menu
+
+        } // switch end
+      }   // if (pushbutton.update())
+    }     // if (pushbutton.fallingEdge())
+  }       // while (true) end
+}         // end of menu function
+
+
+
+/////////////////////////////////////////////////////////// sbMenu()
+void sbMenu()
+{
+  // lets set it up
+  int mStart = 0;   //First menu item
+  int mEnd   = 8 ;  // last menu item
+  int mPick  = 0;   // menu choice
+  int mB4    = 0;   // line # before move
+  String enabled;
+  if (sbEnable) {
+    enabled     = "Enabled";
+  }
+  else {
+    enabled     = "Disabled";
+  }
+  String fastSpeed  = "fSpd :" + String(sbFastSpeed);
+  String fastRate   = "fRate:" + String(sbFastRate);
+  String slowSpeed  = "sSpd :" + String(sbSlowSpeed);
+  String slowRate   = "sRate:" + String(sbSlowRate);
+  String mTurnTime  = "tTime:" + String(sbMinTurnTime);
+  String mTurnAngle = "tAgle:" + String(sbMinTurnAngle);
+  String turnSlope  = "Slope:" + String(sbTurnSlope);
+  String menu1[] = {"Return", enabled, fastSpeed, fastRate, slowSpeed, slowRate, mTurnTime, mTurnAngle, turnSlope };
+  //now draw it
+  tft.fillScreen(ILI9341_CYAN);
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+  tft.setCursor(0, 0);
+  tft.println("SB Menu");
+  for (int i = mStart; i <= mEnd; i++) {
+    tft.setCursor(0, (i + 1) * 25);
+    if (i == mPick) {
+      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+    }
+    else
+    {
+      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+    }
+    //tft.print(String(i) + " ");
+    tft.print(menu1[i]);
+  }
+  // now loop looking for a rotation or a button press
+  while (true)
+  {
+    unsigned char result = rotary_process(); // rotated?
+    if (result) {                            // the button was rotated
+      if (result == DIR_CCW) {               // highlight the next choice
+        if (--mPick < mStart) mPick = mEnd;
+      }
+      else {
+        if (++mPick > mEnd) mPick = mStart;
+      }
+      Serial.printf("mPick: %i, mB4: %i\n\r", mPick, mB4);
+      tft.setCursor(0, (mB4 + 1) * 25);
+      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      //tft.print(String(mB4) + " ");
+      tft.print(menu1[mB4]);
+      tft.setCursor(0, (mPick + 1) * 25);
+      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+      //tft.print(String(mPick) + " ");
+      tft.print(menu1[mPick]);
+      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      mB4 = mPick;
+    }
+    if (pushbutton.update()) {                // button pushed
+      if (pushbutton.fallingEdge()) {
+        switch (mPick) {                      //handle the button push
+          // this will use the uint16_t options so arg 2 is a dummy and arg 8 just need a non-zero value.
+          case 0:  // return
+            tft.fillScreen(ILI9341_BLACK);
+            display();
+            return;
+          case 1: // Enabled
+            mNumChoice(SB_ENABLE, &sbEnable , 0, 1, sbEnable , String("SB Enabled"), "Smartbeacon");
+            if (!sbEnable) {
+              sTime = EEPROM.readInt(XMIT_TIME); // seconds
+              dTime = sTime * 1000; // store the start time into dTime (delay) in milliseconds
+              timeOfAPRS = millis();
+              Serial.print("dTime:");
+              Serial.println(dTime);
+            }
+            return;
+          case 2: // FastSpeed
+            mNumChoice(SBFAST_SPEED, &TimeZone , 10, 100, sbFastSpeed , String("Fast Speed"), "Smartbeacon", sbFastSpeed, &sbFastSpeed);
+            return;
+          case 3:
+            mNumChoice(SBFAST_RATE, &TimeZone , 10, 600, sbFastRate , String("Fast Rate"), "Smartbeacon", sbFastRate, &sbFastRate);
+            return;
+          case 4:
+            mNumChoice(SBSLOW_SPEED, &TimeZone , 1, 20, sbSlowSpeed , String("Slow Speed"), "Smartbeacon", sbSlowSpeed, &sbSlowSpeed);
+            return;
+          case 5:
+            mNumChoice(SBSLOW_RATE, &TimeZone , 1000, 5000, sbSlowRate , String("Slow Rate"), "Smartbeacon", sbSlowRate, &sbSlowRate);
+            return;
+          case 6:
+            mNumChoice(SBTURN_TIME, &TimeZone , 5, 30, sbMinTurnTime , String("Min. Turn Time"), "Smartbeacon", sbMinTurnTime, &sbMinTurnTime);
+            return;
+          case 7:
+            mNumChoice(SBTURN_ANGLE, &TimeZone , 5, 30, sbMinTurnAngle , String("Min. Turn Angle"), "Smartbeacon", sbMinTurnAngle, &sbMinTurnAngle);
+            return;
+          case 8: // SmartBeacon Menu
             mNumChoice(SBTURN_SLOPE, &TimeZone , 200, 300, sbTurnSlope , String("Turn Slope"), "Smartbeacon", sbTurnSlope, &sbTurnSlope);
             return;
         } // switch end
@@ -409,13 +639,13 @@ void sbMenu()
   }       // while (true) end
 }         // end of menu function
 
-///////////////////////////////////////////////////////////////////// menu()
+///////////////////////////////////////////////////////////////////// packetMenu()
 
-void menu(const PathAddress *  paths)
+void packetMenu(const PathAddress *  paths)
 {
   // lets set it up
   int mStart = 0;   //First menu item
-  int mEnd   = 10 ;  // last menu item
+  int mEnd   = 8;   // last menu item
   int mPick  = 0;   // menu choice
   int mB4    = 0;   // line # befor move
   String symName;   // symbol name holder
@@ -433,13 +663,13 @@ void menu(const PathAddress *  paths)
   String xmitDelay = "Delay:" + String(sTime);
   String ssid1     = "SSID: " + String(paths[1].ssid);
   String ssid0     = "SSID: " + String(paths[0].ssid);
-  String menu1[] = {"Return", "Send/Return", utcOffSet, xmitDelay, paths[1].callsign, ssid1, paths[0].callsign, ssid0, symName, "Message", "SmartBeacon" };
+  String menu1[] = {"Return", utcOffSet, xmitDelay, paths[1].callsign, ssid1, paths[0].callsign, ssid0, symName, "Message" };
   //now draw it
   tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
   tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
   tft.setCursor(0, 0);
-  tft.println("   Menu");
+  tft.println("Packet Menu");
   //tft.setCursor(160, 0);
   //tft.print("  ");
   //tft.setCursor(160, 0);
@@ -490,31 +720,24 @@ void menu(const PathAddress *  paths)
             tft.fillScreen(ILI9341_BLACK);
             display();
             return;
-          case 1:  // send and return
-            gps.dataRead();
-            broadcastLocation(gps, myComment );
-            tft.fillScreen(ILI9341_BLACK);
-            timeOfAPRS = millis();
-            display();
-            return;
-          case 2: // utc offset set
+          case 1: // utc offset set
             mNumChoice(UTC_OFFSET, &TimeZone, -12, 14, TimeZone, "UTC Offset", "Set to actual offset including DST");
             return;
-          case 3: // xmit delay
+          case 2: // xmit delay
             mNumChoice(XMIT_TIME, &TimeZone , 10, 600, sTime , String("Xmit Delay"), "Seconds between transissions (10-600)", sTime, &sTime );
             dTime = sTime * 1000;
             return;
-          case 4:
+          case 3:
             mCallChoice("My Call:", sCall) ;
             return;
-          case 5:
+          case 4:
             // same format as 7
             mNumChoice(MY_SSID, &addresses[1].ssid, 0, 15, addresses[1].ssid , String(paths[1].callsign) + "-SSID", "SSID for:" + String(paths[1].callsign) );
             return;
-          case 6:
+          case 5:
             mCallChoice("Dest. Call:", dCall) ;
             return;
-          case 7:
+          case 6:
             mNumChoice(DEST_SSID,
                        &addresses[0].ssid,
                        0,
@@ -523,14 +746,11 @@ void menu(const PathAddress *  paths)
                        String(paths[0].callsign) + "-SSID",
                        "SSID for:" + String(paths[0].callsign) );
             return;
-          case 8:
+          case 7:
             mSymChoice("Symbol", symName, symNum);
             return;
-          case 9: // this will do the message
+          case 8: // this will do the message
             //mSymChoice("Symbol", symName, symNum);
-            return;
-          case 10: // SmartBeacon Menu
-            sbMenu();
             return;
         } // switch end
       }   // if (pushbutton.update())
