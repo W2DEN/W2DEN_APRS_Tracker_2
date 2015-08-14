@@ -44,6 +44,9 @@
 #define AXVOXSILENT  76
 #define PTT_PIN      78
 
+#define COMMLENGTH  35 // length of the AX.25 comment
+//#define //ALPHALENGTH 37 // alpha string length (used for call edit)
+//#define //COMMAPLHPALENGTH
 #define NUM_SYMBOLS 10 // number of symbols in the symbols[] table
 
 // includes
@@ -125,7 +128,7 @@ char dCall[7];      // holds the d destination call
 char buf;           // buffer for EEPROM read
 char symTable;      // symbole table \ or //
 char symbol;        // symbol > car etc/
-char myComment[36]; // comments holder
+char myComment[36]; // comments holder 35 chars + end
 const char* symbols [][9] = { //table of symbols
   {"House", "/", "/"},
   {"Car", "/", ">"},
@@ -159,7 +162,7 @@ uint16_t sbHeading = 0;  // prior heading
 //////////////////////// pre set up variables///////////////////////////
 HardwareSerial &gpsSerial = Serial1;
 GPS gps(&gpsSerial, true);
-void mNumChoice(int eePromAddress, int8_t *variable, int lTZ, int uTZ,  int nTZ, String title, String help , uint16_t TTT = 0, uint16_t *variable2 = 0);
+void mNumChoice(int eePromAddress, int8_t *variable, int lTZ, int uTZ,  int nTZ, String title, String help , uint16_t TTT = 0, uint16_t *variable2 = 0, bool e16bit = false );
 
 uint32_t dTime;
 uint32_t timeOfAPRS = 0;
@@ -189,25 +192,25 @@ void setup()
     dCall[i - DEST_CALL] = buf;
   }
 
-  for (int i = COMMENT; i < COMMENT + 35; i++) { // comment
+  for (int i = COMMENT; i < COMMENT + COMMLENGTH; i++) { // comment
     buf = EEPROM.read(i);
     myComment[i - COMMENT] = buf;
   }
   // now the SmartBeacon parameters...
   // 16 bit allows menu compatability
   sbEnable       = EEPROM.read(SB_ENABLE);
-  sbFastSpeed    = EEPROM.readInt(SBFAST_SPEED);  //mph speeds stored and compared as integers tostop oscilatting
-  sbFastRate     = EEPROM.readInt(SBFAST_RATE);    //seconds
-  sbSlowSpeed    = EEPROM.readInt(SBSLOW_SPEED);     // mph as integer
+  sbFastSpeed    = EEPROM.readInt(SBFAST_SPEED); //mph speeds stored and compared as integers tostop oscilatting
+  sbFastRate     = EEPROM.readInt(SBFAST_RATE);  //seconds
+  sbSlowSpeed    = EEPROM.readInt(SBSLOW_SPEED); // mph as integer
   sbSlowRate     = EEPROM.readInt(SBSLOW_RATE);
-  sbMinTurnTime  = EEPROM.readInt(SBTURN_TIME);  //sec
-  sbMinTurnAngle = EEPROM.readInt(SBTURN_ANGLE); //degrees
-  sbTurnSlope    = EEPROM.readInt(SBTURN_SLOPE);   //
-  axDelay        = EEPROM.readInt(AXDELAY);    // milliseconds
-  axFlags        = EEPROM.readInt(AXFLAGS);    // number of flags to send
-  axVoxOn        = EEPROM.readInt(AXVOXON );    // mseconds vox tone sent to xmitter 0 for off
-  axVoxSilent    = EEPROM.readInt(AXVOXSILENT);   // mseconds VOX tone silent  0 for off
-  pttPin         = EEPROM.readInt(PTT_PIN);   // PTT Teensy Pin usually 13, 0 for off
+  sbMinTurnTime  = EEPROM.readInt(SBTURN_TIME);  // sec
+  sbMinTurnAngle = EEPROM.readInt(SBTURN_ANGLE); // degrees
+  sbTurnSlope    = EEPROM.readInt(SBTURN_SLOPE); //
+  axDelay        = EEPROM.readInt(AXDELAY);      // milliseconds
+  axFlags        = EEPROM.readInt(AXFLAGS);      // number of flags to send
+  axVoxOn        = EEPROM.readInt(AXVOXON );     // mseconds vox tone sent to xmitter 0 for off
+  axVoxSilent    = EEPROM.readInt(AXVOXSILENT);  // mseconds VOX tone silent  0 for off
+  pttPin         = EEPROM.readInt(PTT_PIN);      // PTT Teensy Pin usually 13, 0 for off
 
   tft.begin();
   tft.fillScreen(ILI9341_BLACK);
@@ -225,16 +228,12 @@ void setup()
   gps.setSentencesToReceive(OUTPUT_RMC_GGA);
   rotary_init(); // initialize the rotary
   // Set up the APRS module
-  aprs_setup(AXFLAGS, // number of preamble flags (FLAG) (Hex: 0x7e, ASCII: ~, Binary: 01111110 )to send
-             PTT_PIN, // Use PTT pin (=0 for VOX)
-             AXDELAY, // ms to wait after PTT to transmit
-             AXVOXON, AXVOXSILENT // VOX: tone length, silence length
+  aprs_setup(axFlags, // number of preamble flags (FLAG) (Hex: 0x7e, ASCII: ~, Binary: 01111110 )to send
+             pttPin, // PTT Pin from eePROM
+             axDelay, // ms to wait after PTT to transmit
+             axVoxOn, axVoxSilent // VOX: tone length, silence length
             );
 
-#define AX_DELAY     70
-#define AX_FLAGS  72
-#define AX_VOXTONE   74
-#define AX_VOXSILENT 76
   // wait for a GPS sentence
   while (!(gps.sentenceAvailable())) {
     delay(1000);
@@ -242,19 +241,22 @@ void setup()
   gps.parseSentence();
   gps.dataRead();
   //  // only proced if the dates are valid
-  //  while (gps.month <= 0 || gps.day <= 0 || gps.year <= 0 || gps.speed > 0) {
-  //    if (gps.sentenceAvailable()) gps.parseSentence();
-  //    if (gps.newValuesSinceDataRead())
-  //      gps.dataRead();
-  //    tft.print(".");
-  //    delay(1000);
-  //  }
+  char rot[9] = {'|', '/', (char)195, '\\', '|', '/', (char)195, '\\'};
+  uint i = 0;
+  while (gps.month <= 0 || gps.day <= 0 || gps.year <= 0){ // || gps.speed > 0) {
+    if (gps.sentenceAvailable()) gps.parseSentence();
+    if (gps.newValuesSinceDataRead()) gps.dataRead();
+    tft.setCursor(0, 150);
+    tft.print(rot[i++]);
+    if (i >= sizeof(rot) - 1) i = 0;
+    delay(1000);
+  }
   // now data should be stable. Get set and enter the loop
-  timeOfAPRS = millis();
   sbSpeed   = gps.speed;  //prior read speed
   sbHeading = gps.heading;
   myHeading = sbHeading;
   broadcastLocation(gps, myComment);
+  timeOfAPRS = millis();
   tft.fillScreen(ILI9341_BLACK);
   display();
 }
@@ -268,18 +270,6 @@ void loop()
       menu(addresses);
     }
   }
-  //    unsigned char result = rotary_process(); // rotated?
-  //    if (result) {
-  //      if (result == DIR_CCW) {
-  //        --mySpeed;
-  //      }
-  //      else {
-  //        ++mySpeed;
-  //      }
-  //      Serial.println();
-  //      Serial.print("mySpeed: ");
-  //      Serial.println(mySpeed);
-  //    }
 
   // get GPS data
   if (gps.sentenceAvailable()) gps.parseSentence();
@@ -321,8 +311,6 @@ void loop()
         }
       }
     }
-
-
     display();
     //Serial.printf("Sec: %d Heading %d Knots: %f\n\r", gps.seconds, gps.heading, gps.speed);
     //Serial.printf("Location: %f, %f Heading %d Knots: %f\n\r", gps.latitude, gps.longitude,gps.heading, gps.speed);
@@ -333,7 +321,6 @@ void loop()
   if (gotGPS && timeOfAPRS + dTime < millis()) {
     broadcastLocation(gps, myComment );
     timeOfAPRS = millis(); // reset the timer
-
     //Serial.printf("dTime: %d gps.speed: %f sbSpeed %f sbSlowrate: %d\n\r", dTime, gps.speed, sbSpeed , sbSlowRate);
     // SmartBeacon speed < low speed test and adjust as needed.
     if (sbEnable) {
@@ -372,10 +359,6 @@ void menu(const PathAddress *  paths) {
     tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
     tft.setCursor(0, 0);
     tft.println("Main  Menu");
-    //tft.setCursor(160, 0);
-    //tft.print("  ");
-    //tft.setCursor(160, 0);
-    //tft.print(mPick);
     for (int i = mStart; i <= mEnd; i++) {
       tft.setCursor(0, (i + 1) * 25);
       if (i == mPick) {
@@ -450,27 +433,27 @@ void ax25Menu()
   int mPick  = 0;   // menu choice
   int mB4    = 0;   // line # before move
 
-  String maxDelay      = "Xmit Delay:" + String(axDelay);
+  String maxDelay      = "Xmit Dly:" + String(axDelay);
   String maxFlags      = "# of Flags:" + String(axFlags);
-  String maxVoxOn      = "VOX on:" + String(axVoxOn);
-  String maxVoxSilent  = "VOX off :" + String(axVoxSilent);
+  String maxVoxOn      = "VOX on :" + String(axVoxOn);
+  String maxVoxSilent  = "VOX off:" + String(axVoxSilent);
   String mpttPin       = "PTT Pin:" + String(pttPin);
 
   String menu1[] = {"Return", maxDelay, maxFlags, maxVoxOn, maxVoxSilent, mpttPin };
   //now draw it
-  tft.fillScreen(ILI9341_CYAN);
+  tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
-  tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
   tft.setCursor(0, 0);
   tft.println("AX.25 Menu");
   for (int i = mStart; i <= mEnd; i++) {
     tft.setCursor(0, (i + 1) * 25);
     if (i == mPick) {
-      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
     }
     else
     {
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
     }
     //tft.print(String(i) + " ");
     tft.print(menu1[i]);
@@ -488,14 +471,14 @@ void ax25Menu()
       }
       Serial.printf("mPick: %i, mB4: %i\n\r", mPick, mB4);
       tft.setCursor(0, (mB4 + 1) * 25);
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
       //tft.print(String(mB4) + " ");
       tft.print(menu1[mB4]);
       tft.setCursor(0, (mPick + 1) * 25);
-      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
       //tft.print(String(mPick) + " ");
       tft.print(menu1[mPick]);
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
       mB4 = mPick;
     }
     if (pushbutton.update()) {                // button pushed
@@ -507,19 +490,19 @@ void ax25Menu()
             display();
             return;
           case 1: // xmit delay
-            mNumChoice(AXDELAY, &TimeZone , 10, 1000, axDelay , String("Xmit Delay"), "Xmit Delay", axDelay, &axDelay);
+            mNumChoice(AXDELAY, &TimeZone , 10, 1000, axDelay , String("Xmit Delay"), "Xmit Delay in milliseconds", axDelay, &axDelay, true);
             return;
           case 2: // flags
-            mNumChoice(AXFLAGS, &TimeZone , 1, 100, axFlags , String("Flags"), "Flags", axFlags, &axFlags);
+            mNumChoice(AXFLAGS, &TimeZone , 1, 100, axFlags , String("Flags"), "# of AX'25 frame start flags", axFlags, &axFlags, true);
+            return;
+          case 3:
+            mNumChoice(AXVOXON, &TimeZone , 0, 1000, axVoxOn , String("VOX On"), "VOX On milliseconds. >0 for VOX. PTT Pin must be set to o to turn on VOX)", axVoxOn, &axVoxOn, true);
             return;
           case 4:
-            mNumChoice(AXVOXON, &TimeZone , 0, 1000, axVoxOn , String("VOX On"), "VOX On", axVoxOn, &axVoxOn);
+            mNumChoice(AXVOXSILENT, &TimeZone , 0, 1000, axVoxSilent , String("VOX Silent"), "VOX Silent milliseconds", axVoxSilent, &axVoxSilent, true);
             return;
           case 5:
-            mNumChoice(AXVOXSILENT, &TimeZone , 0, 1000, axVoxSilent , String("VOX Silent"), "VOX Silent", axVoxSilent, &axVoxSilent);
-            return;
-          case 6:
-            mNumChoice(PTT_PIN , &TimeZone , 0, 23, pttPin , String("PTT Pin #"), "PTT Pin", pttPin, &pttPin);
+            mNumChoice(PTT_PIN , &TimeZone , 0, 23, pttPin , String("PTT Pin #"), "PTT Pin (usually 13) Set to 0 and VOX On >0 for VOX", pttPin, &pttPin, true);
             return;
 
         } // switch end
@@ -554,19 +537,19 @@ void sbMenu()
   String turnSlope  = "Slope:" + String(sbTurnSlope);
   String menu1[] = {"Return", enabled, fastSpeed, fastRate, slowSpeed, slowRate, mTurnTime, mTurnAngle, turnSlope };
   //now draw it
-  tft.fillScreen(ILI9341_CYAN);
+  tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
-  tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
   tft.setCursor(0, 0);
   tft.println("SB Menu");
   for (int i = mStart; i <= mEnd; i++) {
     tft.setCursor(0, (i + 1) * 25);
     if (i == mPick) {
-      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
     }
     else
     {
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
     }
     //tft.print(String(i) + " ");
     tft.print(menu1[i]);
@@ -584,14 +567,14 @@ void sbMenu()
       }
       Serial.printf("mPick: %i, mB4: %i\n\r", mPick, mB4);
       tft.setCursor(0, (mB4 + 1) * 25);
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
       //tft.print(String(mB4) + " ");
       tft.print(menu1[mB4]);
       tft.setCursor(0, (mPick + 1) * 25);
-      tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
       //tft.print(String(mPick) + " ");
       tft.print(menu1[mPick]);
-      tft.setTextColor(ILI9341_BLACK, ILI9341_CYAN);
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
       mB4 = mPick;
     }
     if (pushbutton.update()) {                // button pushed
@@ -613,25 +596,25 @@ void sbMenu()
             }
             return;
           case 2: // FastSpeed
-            mNumChoice(SBFAST_SPEED, &TimeZone , 10, 100, sbFastSpeed , String("Fast Speed"), "Smartbeacon", sbFastSpeed, &sbFastSpeed);
+            mNumChoice(SBFAST_SPEED, &TimeZone , 10, 100, sbFastSpeed , String("Fast Speed"), "MPH. At or above this speed xmit delay = Fast Rate", sbFastSpeed, &sbFastSpeed, true);
             return;
           case 3:
-            mNumChoice(SBFAST_RATE, &TimeZone , 10, 600, sbFastRate , String("Fast Rate"), "Smartbeacon", sbFastRate, &sbFastRate);
+            mNumChoice(SBFAST_RATE, &TimeZone , 10, 600, sbFastRate , String("Fast Rate"), "Seconds. Xmit delay at or above Fast Speed", sbFastRate, &sbFastRate, true);
             return;
           case 4:
-            mNumChoice(SBSLOW_SPEED, &TimeZone , 1, 20, sbSlowSpeed , String("Slow Speed"), "Smartbeacon", sbSlowSpeed, &sbSlowSpeed);
+            mNumChoice(SBSLOW_SPEED, &TimeZone , 1, 20, sbSlowSpeed , String("Slow Speed"), "MPH. At or below this speed xmit delay = Slow Rate", sbSlowSpeed, &sbSlowSpeed, true);
             return;
           case 5:
-            mNumChoice(SBSLOW_RATE, &TimeZone , 1000, 5000, sbSlowRate , String("Slow Rate"), "Smartbeacon", sbSlowRate, &sbSlowRate);
+            mNumChoice(SBSLOW_RATE, &TimeZone , 1000, 5000, sbSlowRate , String("Slow Rate"), "Seconds. Xmit delay at or below Slow Speed", sbSlowRate, &sbSlowRate, true);
             return;
           case 6:
-            mNumChoice(SBTURN_TIME, &TimeZone , 5, 30, sbMinTurnTime , String("Min. Turn Time"), "Smartbeacon", sbMinTurnTime, &sbMinTurnTime);
+            mNumChoice(SBTURN_TIME, &TimeZone , 5, 30, sbMinTurnTime , String("Min. Turn Time"), "Seconds. Minimum time between ximts for a turn", sbMinTurnTime, &sbMinTurnTime, true);
             return;
           case 7:
-            mNumChoice(SBTURN_ANGLE, &TimeZone , 5, 30, sbMinTurnAngle , String("Min. Turn Angle"), "Smartbeacon", sbMinTurnAngle, &sbMinTurnAngle);
+            mNumChoice(SBTURN_ANGLE, &TimeZone , 5, 30, sbMinTurnAngle , String("Min. Turn Angle"), "Degrees. Minimu degrees required bedofr turn xmit", sbMinTurnAngle, &sbMinTurnAngle, true);
             return;
           case 8: // SmartBeacon Menu
-            mNumChoice(SBTURN_SLOPE, &TimeZone , 200, 300, sbTurnSlope , String("Turn Slope"), "Smartbeacon", sbTurnSlope, &sbTurnSlope);
+            mNumChoice(SBTURN_SLOPE, &TimeZone , 200, 300, sbTurnSlope , String("Turn Slope"), "Turn slope. See SmartBeacon documentation", sbTurnSlope, &sbTurnSlope, true);
             return;
         } // switch end
       }   // if (pushbutton.update())
@@ -663,7 +646,7 @@ void packetMenu(const PathAddress *  paths)
   String xmitDelay = "Delay:" + String(sTime);
   String ssid1     = "SSID: " + String(paths[1].ssid);
   String ssid0     = "SSID: " + String(paths[0].ssid);
-  String menu1[] = {"Return", utcOffSet, xmitDelay, paths[1].callsign, ssid1, paths[0].callsign, ssid0, symName, "Message" };
+  String menu1[] = {"Return", utcOffSet, xmitDelay, paths[1].callsign, ssid1, paths[0].callsign, ssid0, symName, "Comment" };
   //now draw it
   tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
@@ -715,42 +698,39 @@ void packetMenu(const PathAddress *  paths)
     }
     if (pushbutton.update()) {                // button pushed
       if (pushbutton.fallingEdge()) {
+        char callAlpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 ";  // Call Alpha array to make the call
+        char commAlpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890 *";  // Meaasage Alpha array to make the call
         switch (mPick) {                      //handle the button push
           case 0:  // return
             tft.fillScreen(ILI9341_BLACK);
             display();
             return;
           case 1: // utc offset set
-            mNumChoice(UTC_OFFSET, &TimeZone, -12, 14, TimeZone, "UTC Offset", "Set to actual offset including DST");
+            mNumChoice(UTC_OFFSET, &TimeZone, -12, 14, TimeZone, "UTC Offset", "Hours. Set to actual offset including DST");
             return;
           case 2: // xmit delay
-            mNumChoice(XMIT_TIME, &TimeZone , 10, 600, sTime , String("Xmit Delay"), "Seconds between transissions (10-600)", sTime, &sTime );
+            mNumChoice(XMIT_TIME, &TimeZone , 10, 600, sTime , String("Xmit Delay"), "Seconds between transissions (10-600) if SmartBeacon disabled", sTime, &sTime, true );
             dTime = sTime * 1000;
             return;
           case 3:
-            mCallChoice("My Call:", sCall) ;
+
+            mCallChoice("My Call:", sCall, callAlpha, strlen(callAlpha)) ;
             return;
           case 4:
             // same format as 7
             mNumChoice(MY_SSID, &addresses[1].ssid, 0, 15, addresses[1].ssid , String(paths[1].callsign) + "-SSID", "SSID for:" + String(paths[1].callsign) );
             return;
           case 5:
-            mCallChoice("Dest. Call:", dCall) ;
+            mCallChoice("Dest. Call:", dCall, callAlpha, strlen(callAlpha)) ;
             return;
           case 6:
-            mNumChoice(DEST_SSID,
-                       &addresses[0].ssid,
-                       0,
-                       15,
-                       addresses[0].ssid ,
-                       String(paths[0].callsign) + "-SSID",
-                       "SSID for:" + String(paths[0].callsign) );
+            mNumChoice(DEST_SSID, &addresses[0].ssid, 0, 15, addresses[0].ssid , String(paths[0].callsign) + "-SSID", "SSID for:" + String(paths[0].callsign) );
             return;
           case 7:
             mSymChoice("Symbol", symName, symNum);
             return;
           case 8: // this will do the message
-            //mSymChoice("Symbol", symName, symNum);
+            mCommChoice("Comment:", myComment, commAlpha, strlen(commAlpha)) ;
             return;
         } // switch end
       }   // if (pushbutton.update())
@@ -758,76 +738,15 @@ void packetMenu(const PathAddress *  paths)
   }       // while (true) end
 }         // end of menu function
 
-////////////////////////////////////////////////////////////mSymChoice
-void mSymChoice(String title, String sNameNow, int sNumNow  ) {
-  /*
-   * Menu choice for the symbols....
-   *
-   */
-  // this is the setup()
 
-  tft.fillScreen(ILI9341_BLUE);     // now draw the screen
-  tft.setTextSize(3);
-  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
-  tft.setCursor(0, 0);
-  tft.println(title);
-  tft.setCursor(0, 25);
-  tft.print("Now: ");
-  tft.setCursor(80, 25);
-  tft.print(sNameNow);
-  tft.setCursor(0, 75);
-  tft.print("New: ");
-  tft.setCursor(80, 75);
-  tft.setTextColor( ILI9341_BLUE, ILI9341_WHITE);
-  tft.print(symbols[sNumNow][0]);
-  int sNumNew = sNumNow;
-  while (true) {
-    if (pushbutton.update()) {                // button pushed
-      if (pushbutton.fallingEdge()) {
-        if (sNumNew != sNumNow) {      // we have a new symbol to save
-          Serial.print(symbols[sNumNew][1]);
-          Serial.print(symbols[sNumNew][2]);
-          Serial.println(symbols[sNumNew][0]);
-          EEPROM.update(SYM_TABLE, symbols[sNumNew][1][0]);
-          EEPROM.update(SYMBOL, symbols[sNumNew][2][0]);
-          symTable = symbols[sNumNew][1][0];
-          symbol = symbols[sNumNew][2][0];
-          Serial.println(symTable);
-          Serial.print(symbol);
-        }
-        tft.fillScreen(ILI9341_BLACK);
-        display();
-        return;
-
-      }
-    }
-    unsigned char result = rotary_process(); // rotated?
-    if (result) {
-      if (result == DIR_CCW) {
-        --sNumNew;
-        if (sNumNew < 0 ) sNumNew = NUM_SYMBOLS - 1;
-      }
-      else {
-        ++sNumNew;
-        if (sNumNew >= NUM_SYMBOLS ) sNumNew = 0;
-      }
-      tft.setCursor(80, 75 );
-      tft.setTextColor( ILI9341_WHITE, ILI9341_BLUE);
-      tft.print( "           " );
-      tft.setCursor(80, 75 );
-      tft.setTextColor( ILI9341_BLUE, ILI9341_WHITE);
-      tft.print(symbols[sNumNew][0]);
-    }
-  }
-}
 ////////////////////////////////////////////////////////////mCallChoice
-void mCallChoice(String title, char *vnow) {
+void mCallChoice(String title, char *vnow, char * alpha, int alength) {
   /*
    * Menu choice for the two call signs....
    *
    */
   // this is the setup()
-  char alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 ";  // Alpha array to make the call
+
   char cNew[7]; //"123456";   // holds new call
   strcpy(cNew, vnow);
   String mCallExit[] = {"Continue", "Exit", "Exit/Save"};  // exit choices
@@ -914,7 +833,7 @@ void mCallChoice(String title, char *vnow) {
       }   // for loop en
     }     // PB end.. from way up there
     // find the existing call letter in the alpha array so the rotation starts there!
-    for (int i = 0; i < 37; i++) {
+    for (int i = 0; i < alength; i++) {
       if (cNew[nLetter] == alpha[i]) {
         letter = i; // found it, set the letter to is and get out of the for loop
         break;
@@ -924,11 +843,11 @@ void mCallChoice(String title, char *vnow) {
     if (result) {
       if (result == DIR_CCW) {
         --letter;
-        if (letter < 0) letter = 37;
+        if (letter < 0) letter = alength;
       }
       else {
         ++letter;
-        if (letter > 37) letter = 0;
+        if (letter > alength) letter = 0;
       }
       cNew[nLetter] = alpha[letter];
       tft.setCursor(90, 75);
@@ -947,31 +866,87 @@ void mCallChoice(String title, char *vnow) {
 }         // mCallChoice() end
 
 
+////////////////////////////////////////////////////////////mSymChoice
+void mSymChoice(String title, String sNameNow, int sNumNow  ) {
+  /*
+   * Menu choice for the symbols....
+   *
+   */
+  // this is the setup()
+
+  tft.fillScreen(ILI9341_BLUE);     // now draw the screen
+  tft.setTextSize(3);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.setCursor(0, 0);
+  tft.println(title);
+  tft.setCursor(0, 25);
+  tft.print("Now: ");
+  tft.setCursor(80, 25);
+  tft.print(sNameNow);
+  tft.setCursor(0, 75);
+  tft.print("New: ");
+  tft.setCursor(80, 75);
+  tft.setTextColor( ILI9341_BLUE, ILI9341_WHITE);
+  tft.print(symbols[sNumNow][0]);
+  int sNumNew = sNumNow;
+  while (true) {
+    if (pushbutton.update()) {                // button pushed
+      if (pushbutton.fallingEdge()) {
+        if (sNumNew != sNumNow) {      // we have a new symbol to save
+          Serial.print(symbols[sNumNew][1]);
+          Serial.print(symbols[sNumNew][2]);
+          Serial.println(symbols[sNumNew][0]);
+          EEPROM.update(SYM_TABLE, symbols[sNumNew][1][0]);
+          EEPROM.update(SYMBOL, symbols[sNumNew][2][0]);
+          symTable = symbols[sNumNew][1][0];
+          symbol = symbols[sNumNew][2][0];
+          Serial.println(symTable);
+          Serial.print(symbol);
+        }
+        tft.fillScreen(ILI9341_BLACK);
+        display();
+        return;
+
+      }
+    }
+    unsigned char result = rotary_process(); // rotated?
+    if (result) {
+      if (result == DIR_CCW) {
+        --sNumNew;
+        if (sNumNew < 0 ) sNumNew = NUM_SYMBOLS - 1;
+      }
+      else {
+        ++sNumNew;
+        if (sNumNew >= NUM_SYMBOLS ) sNumNew = 0;
+      }
+      tft.setCursor(80, 75 );
+      tft.setTextColor( ILI9341_WHITE, ILI9341_BLUE);
+      tft.print( "           " );
+      tft.setCursor(80, 75 );
+      tft.setTextColor( ILI9341_BLUE, ILI9341_WHITE);
+      tft.print(symbols[sNumNew][0]);
+    }
+  }
+}
+
+
 ////////////////////////////////////////////////////////////mNumChoice
 void mNumChoice(int eePromAddress
-                , int8_t *variable  // pointer to the int8_t variable to be edited
-                , int lTZ           // lower choice limit
-                , int uTZ           // upper choice limit
-                , int nTZ           // this is the current value that is dispalyed
-                , String title      // size 3 at top of screen
-                , String help       //size 2 below input area
-                , uint16_t TTT      // optional current value non-zero for trigger
-                , uint16_t *variable2) // opt. pointer to uint32_t value to be edited
+                , int8_t *variable    // pointer to the int8_t variable to be edited
+                , int lTZ             // lower choice limit
+                , int uTZ             // upper choice limit
+                , int nTZ             // this is the current value that is dispalyed
+                , String title        // size 3 at top of screen
+                , String help         // size 2 below input area
+                , uint16_t TTT        // optional current value
+                , uint16_t *variable2 // optional pointer to uint32_t value to be edited
+                , bool e16Bit )       // optional default = false true for uint16_t16 bit
 {
   /*
    * Menu choice for numeric entries entries
-   * Pararmaters:
-   *  EEPROM address
-   *  *variable pts to the variable we are changing
-   *  dTime =0 to skip
-   *  lTZ lower limit
-   *  uTZ upper limit
-   *  nTZ current value
-   *  title top of menu item 13 chars max
-   *  help can be multi-line string. 20 chars / line
-   *  TTT optional current time in second !=0 for dTime delay
-   *  * tz, SIIDs are signed 8 bit, xmit delay time is 16 (int())
-   *  *variable optional points to dTime
+   * Pararmaters described above.
+   * Optional parameters are all or none.
+   * Optional 'flag' is e16Bit = true
    */
   tft.fillScreen(ILI9341_BLUE);
   tft.setTextSize(3);
@@ -980,7 +955,7 @@ void mNumChoice(int eePromAddress
   tft.println(title);
   tft.setCursor(0, 25);
   tft.print("Now: ");
-  if (TTT != 0) {
+  if (e16Bit) {
     tft.print(*variable2);
   }
   else {
@@ -1001,7 +976,7 @@ void mNumChoice(int eePromAddress
   while (true) {
     if (pushbutton.update()) {                // button pushed
       if (pushbutton.fallingEdge()) {
-        if (TTT != 0) {                      // this is the int16_t calcs.
+        if (e16Bit) {                      // this is the int16_t calcs.
           if (*variable2 != nTZ) {           // *variable2 points to dTime
             *variable2 = nTZ;
             EEPROM.updateInt(eePromAddress, *variable2);
@@ -1299,4 +1274,200 @@ void broadcastLocation(GPS &gps, const char *bcomment)
   //Serial.print("APRS sent");
   //Serial.printf("Location: %f, %f altitude %f\n\r", gps.latitude, gps.longitude, gps.altitude);
 }
+
+///////////////////////////////////////////////////////////////////// mCommChoice()
+void mCommChoice(String title, char *vnow, char * alpha, int alength) {
+  /*
+   * Menu choice for the two call signs....
+   *
+   */
+  // this is the setup()
+  uint16_t white    = ILI9341_WHITE;
+  uint16_t yellow   = ILI9341_YELLOW;
+  char cNew[35];                // holds new comment
+  strcpy(cNew, vnow);           // put old into new
+  String mCallExit[] = {"Continue", "Exit", "Exit/Save"};  // exit choices
+  int nLetter = 0;              // pointer to current letter in new call
+  int letter = 0;               // ptr for the alpha[] array when rotating.
+  int mCallExitChoice = 0;      // exit choice pointer
+  tft.setRotation(3);
+  tft.fillScreen(ILI9341_BLUE); // now draw the screen
+  tft.setTextSize(3);
+
+  tft.setCursor(0, 0);
+  tft.setTextColor(ILI9341_NAVY);
+  tft.println(title);
+  tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+  tft.setCursor(0, 25);
+  tft.print("Now: ");
+  tft.setCursor(0, 50);
+  tft.print(vnow);
+  tft.setCursor(0, 100);
+  tft.print("New: ");
+  tft.setCursor(0, 125);
+  for (int i = 0; i < 35; i++) {  // this is a predraw before we enter the loop
+    if (i == nLetter) {
+      tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
+      tft.print(cNew[i]);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+    }
+    else {
+      tft.print(cNew[i]);
+    }
+  }
+  // this is the loop() for the comment editor
+  while (true) {
+    unsigned char result = rotary_process(); ////////////////////////rotated //////////////////////////////////
+    if (result) {
+      if (result == DIR_CCW) {
+        --nLetter;
+      }
+      else {
+        ++nLetter;
+      }
+      if (nLetter < 0 || nLetter == COMMLENGTH) { // display exit choice
+        tft.setCursor(0, 125);
+        for (int i = 0; i < COMMLENGTH; i++) {
+          tft.print(cNew[i]);
+        }
+        tft.setCursor(20, 200);
+        nLetter++;
+        tft.print( "         " );
+        tft.setCursor(20, 200);
+        tft.print( mCallExit[mCallExitChoice]);
+        while (true) {
+          unsigned char result = rotary_process(); // rotated?
+          if (result) {
+            if (++mCallExitChoice > 2) mCallExitChoice = 0;
+            tft.setCursor(20, 200); // display exit options
+            tft.setTextColor( ILI9341_WHITE, ILI9341_BLUE);
+            tft.print( "         " );
+            tft.setTextColor( ILI9341_BLUE, ILI9341_WHITE);
+            tft.setCursor(20, 200);
+            tft.print( mCallExit[mCallExitChoice]);
+          }
+          if (pushbutton.update()) {                // button pushed
+            if (pushbutton.fallingEdge()) {
+              switch (mCallExitChoice) {
+                case 0: //continue
+                  tft.setCursor(20, 200);
+                  tft.setTextColor( ILI9341_WHITE, ILI9341_BLUE); // blank the exit choice
+                  tft.print( "         " );
+                  break; //breaks the switch
+                case 1: // exit
+                  tft.setRotation(0);
+                  tft.fillScreen(ILI9341_BLACK);
+                  display();
+                  return;
+                case 2: //exit and save
+                  strcpy(vnow, cNew);
+                  for (int i = 0; i < 35; i++) {
+                    EEPROM.update(COMMENT + i, char(vnow[i]));
+                  }
+                  tft.setRotation(0);
+                  tft.fillScreen(ILI9341_BLACK);
+                  display();
+                  return;
+              } // switch end
+              break;  // breaks the exit while true loop
+            } // falling edge if
+          } // pb update if
+        } //while true
+
+        if (nLetter < 0) nLetter = COMMLENGTH - 1;
+        if (nLetter > COMMLENGTH) nLetter = 0;
+        mDispComment(nLetter, cNew, white);
+      }
+      else {
+        mDispComment(nLetter, cNew, white);
+      }     // else
+    }       // if result end
+    if (pushbutton.update()) {                ////////////////////////////// button pushed //////////////////////////////////
+      if (pushbutton.fallingEdge()) {
+        for (int i = 0; i < alength; i++) { // find the letter under pb in alpha
+          if (cNew[nLetter] == alpha[i]) {
+            letter = i; // found it, set the letter to is and get out of the for loop
+          }
+        }
+        mDispComment(nLetter, cNew, yellow);
+        while (true) {
+          unsigned char result = rotary_process(); // rotated?
+          if (result) {
+            if (result == DIR_CCW) {
+              --letter;
+              if (letter < 0) letter = alength;
+            }
+            else {
+              ++letter;
+              if (letter > alength) letter = 0;
+            }
+            cNew[nLetter] = alpha[letter];        // put the new letter into the cNew string
+            mDispComment(nLetter, cNew, yellow); // display it
+          }  // if rotated result
+
+          if (pushbutton.update()) {     // button pushed
+            if (pushbutton.fallingEdge()) {
+              break;
+            }
+          }  // pushbutton
+        }    // while true letter edit loop
+      }      // falling edge if
+    }        // pushbutton if update
+  }          // While true loop
+}            // mMessChoice()
+
+void mDispComment(int nLetter, char *cNew, uint16_t color) {
+  tft.setCursor(0, 125);
+  tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+  for (int i = 0; i < COMMLENGTH; i++) {
+    if (i == nLetter) {
+      tft.setTextColor(color, ILI9341_BLUE);
+      tft.print(cNew[i]);
+      tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+    }
+    else {
+      tft.print(cNew[i]);
+    }
+  }  // for loop disp comment
+}  // function end
+
+
+//    if (pushbutton.update()) {                // button pushed
+//      if (pushbutton.fallingEdge()) {
+// while true loop for exit
+//        }       // if need to go into end loop if
+//      }         // pb if while scanning call
+//
+//      }   // for loop en
+//    }     // PB end.. from way up there
+//    // find the existing call letter in the alpha array so the rotation starts there!
+//    for (int i = 0; i < 37; i++) {
+//      if (cNew[nLetter] == alpha[i]) {
+//        letter = i; // found it, set the letter to is and get out of the for loop
+//        break;
+//      }
+//    }
+//    unsigned char result = rotary_process(); // rotated?
+//    if (result) {
+//      if (result == DIR_CCW) {
+//        --letter;
+//        if (letter < 0) letter = 37;
+//      }
+//      else {
+//        ++letter;
+//        if (letter > 37) letter = 0;
+//      }
+//      cNew[nLetter] = alpha[letter];
+//      tft.setCursor(90, 75);
+//      for (int i = 0; i < 6; i++) {
+//        if (i == nLetter) {
+//          tft.setTextColor(ILI9341_YELLOW, ILI9341_BLUE);
+//          tft.print(cNew[i]);
+//          tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
+//        }
+//        else {
+//          tft.print(cNew[i]);
+//        } // if/else end
+//      }   // for loop end printing the call
+//    }     // if(result) end
 
