@@ -1,7 +1,6 @@
-
 /*
 * This is W2DEN's attempt at a Teensy3.1 APRS Tracker.
-* This is V 2.01 adding a menu system to allow user input.
+* This is V 2.02 adding a menu system to allow user input.
 * see N4SER.org for details
 *
 * Compiler Macro Substitutes (#define) in ALL_CAPS with underline for spaces
@@ -20,7 +19,7 @@
 ********************************************************************
 *
 */
-#define thisver "2.01" ////////////////////////////////// VERSION
+#define thisver "2.02" ////////////////////////////////// VERSION
 // these define the starting EEPROM addresses.
 // easier to change these than dig for the constants.
 #define UTC_OFFSET 1
@@ -45,7 +44,8 @@
 #define AXVOXON      74
 #define AXVOXSILENT  76
 #define PTT_PIN      78
-#define TFT_ONOFF    80 // tft On / Off (1 / 0) EEPROM address
+#define TFT_ONOFF    80 // tft On / Off (1 / 0) EEPROM address only 1 byte
+#define SQUELCH      81 // the squelch threshol eeprom address 
 
 #define COMMLENGTH  35 // length of the AX.25 comment
 #define NUM_SYMBOLS 10 // number of symbols in the symbols[] table
@@ -102,10 +102,14 @@ int gpsHour;
 
 // Define the I/O pins
 //#define PTT_PIN 13 // Push to talk pin tis is now eePROM
-#define ROTARY_PIN1  5
-#define ROTARY_PIN2  6
-#define BUTTONPIN    4
+#define ROTARY_PIN1   5
+#define ROTARY_PIN2   6
+#define BUTTONPIN     4
 #define TFT_ONOFF_PIN 3 // tft On Off PWM pin
+#define SQUEL_PIN     A6       // these are constants for the squelch threshold
+#define SQUEL_REF     INTERNAL
+#define SQUEL_RES     10
+#define SQUEL_AVE     16
 
 ////////////// user data set up //////////////////////////////
 //
@@ -158,6 +162,7 @@ uint16_t axVoxOn;        // mseconds vox tone sent to xmitter 0 for off
 uint16_t axVoxSilent;    // mseconds VOX tone silent  0 for off
 uint16_t pttPin;         // PTT Teensy Pin usually 13, 0 for off
 int8_t   tftOnOff;       // tft brightness setting
+uint16_t squelch;        // squelch threshold vlaue holder
 
 uint16_t mySpeed   = 0;  // Holds gps.speed for processing
 uint16_t myHeading = 0;
@@ -215,8 +220,8 @@ void setup()
   axVoxOn        = EEPROM.readInt(AXVOXON );     // mseconds vox tone sent to xmitter 0 for off
   axVoxSilent    = EEPROM.readInt(AXVOXSILENT);  // mseconds VOX tone silent  0 for off
   pttPin         = EEPROM.readInt(PTT_PIN);      // PTT Teensy Pin usually 13, 0 for off
-  tftOnOff       = EEPROM.readInt(TFT_ONOFF);    // tft On / Off: 1 or 0
-
+  tftOnOff       = EEPROM.read(TFT_ONOFF);       // tft On / Off: 1 or 0
+  squelch        = EEPROM.readInt(SQUELCH);      // read ssquelch threshold from eePROM into variable
   tft.begin();
   pinMode(TFT_ONOFF_PIN, OUTPUT);
   digitalWrite(TFT_ONOFF_PIN, 1); /// this is the TFT display On Off set to on for boot
@@ -253,6 +258,11 @@ void setup()
   char rot[9] = {'|', '/', (char)195, '\\', '|', '/', (char)195, '\\'};
   uint i = 0;
   while (gps.month <= 0 || gps.day <= 0 || gps.year <= 0) { // || gps.speed > 0) {
+    Serial.print( gps.month);
+    Serial.print( "/");
+    Serial.print( gps.day);
+    Serial.print( "/");
+    Serial.println( gps.year);
     if (gps.sentenceAvailable()) gps.parseSentence();
     if (gps.newValuesSinceDataRead()) gps.dataRead();
     tft.setCursor(0, 150);
@@ -294,8 +304,8 @@ void loop()
   if (gps.newValuesSinceDataRead()) {         // go here as the seconds tick
     displayCountDown();
     gps.dataRead();
-    if (sbEnable) {
-      gotGPS = true; // prior validate idea... on the to do list
+    gotGPS = true; // prior validate idea... on the to do list
+    if (sbEnable) {     
       mySpeed   = round(gps.speed * knotToMPH); // convert knots to MPH and store.
       myHeading = round(gps.heading);           // store the heading
       // SmartBeacon... my way
@@ -359,6 +369,25 @@ void loop()
 //       FUNCTIONS from here down                                          //
 //                                                                         //
 /////////////////////////////////////////////////////////////////////////////
+
+
+
+
+/////////////////////////////////////////////////////////////////////// squelcher()
+// returns the integer value on the SQUEL_PIN
+int squelcher() {
+  // read the audio level 10 times at 10 millisecond inetervals (100 msec )
+  // return the total
+  analogReference(SQUEL_REF );
+  analogReadResolution(SQUEL_RES);
+  analogReadAveraging(SQUEL_AVE);
+  int t = 0;
+  for (int i = 0; i < 10; i++) {
+    t = t + analogRead(SQUEL_PIN);
+    delay (10);
+  }
+  return t;
+}
 
 
 /////////////////////////////////////////////////////////////////////// menuHeader()
@@ -484,7 +513,7 @@ void ax25Menu()
 {
   // lets set it up
   int mStart = 0;   //First menu item
-  int mEnd   = 5 ;  // last menu item
+  int mEnd   = 6 ;  // last menu item
   int mPick  = 0;   // menu choice
   int mB4    = 0;   // line # before move
   String menu1[][2] = {
@@ -493,7 +522,8 @@ void ax25Menu()
     {"# Flags :", String(axFlags)},
     {"VOX on  :", String(axVoxOn)},
     {"VOX off :", String(axVoxSilent)},
-    {"PTT Pin :", String(pttPin)}
+    {"PTT Pin :", String(pttPin)},
+    {"Squelch :", String(squelch)}
   };
   //now draw it
   menuHeader("AX.25 Menu", mStart, mEnd, mPick, menu1  );
@@ -528,17 +558,17 @@ void ax25Menu()
             tft.fillScreen(ILI9341_BLUE);
             return;
           case 1: // xmit delay
-            mNumChoice(AXDELAY, &TimeZone , 10, 1000, axDelay , String("Xmit Delay"), "Xmit Delay in milliseconds", axDelay, &axDelay, true);
+            mNumChoice(AXDELAY, &TimeZone , 10, 1000, axDelay , String("Xmit Delay"), "Xmit Delay in       milliseconds", axDelay, &axDelay, true);
             menu1[1][1] = String(axDelay);
             menuHeader("AX.25 Menu", mStart, mEnd, 1, menu1  );
             break;
           case 2: // flags
-            mNumChoice(AXFLAGS, &TimeZone , 1, 100, axFlags , String("Flags"), "# of AX'25 frame start flags", axFlags, &axFlags, true);
+            mNumChoice(AXFLAGS, &TimeZone , 1, 100, axFlags , String("Flags"), "# of AX'25 frame    start flags", axFlags, &axFlags, true);
             menu1[2][1] = String(axFlags);
             menuHeader("AX.25 Menu", mStart, mEnd, 2, menu1  );
             break;
           case 3:
-            mNumChoice(AXVOXON, &TimeZone , 0, 1000, axVoxOn , String("VOX On"), "VOX On milliseconds. >0 for VOX. PTT Pin must be set to o to turn on VOX)", axVoxOn, &axVoxOn, true);
+            mNumChoice(AXVOXON, &TimeZone , 0, 1000, axVoxOn , String("VOX On"), "VOX On milliseconds. >0 for VOX.        PTT Pin must be set to o to turn on VOX)", axVoxOn, &axVoxOn, true);
             menu1[3][1] = String(axVoxOn);
             menuHeader("AX.25 Menu", mStart, mEnd, 3, menu1  );
             break;
@@ -548,9 +578,14 @@ void ax25Menu()
             menuHeader("AX.25 Menu", mStart, mEnd, 4, menu1  );
             break;
           case 5:
-            mNumChoice(PTT_PIN , &TimeZone , 0, 23, pttPin , String("PTT Pin #"), "PTT Pin (usually 13) Set to 0 and VOX On >0 for VOX", pttPin, &pttPin, true);
+            mNumChoice(PTT_PIN , &TimeZone , 0, 23, pttPin , String("PTT Pin #"), "PTT Pin (usually 13)0 (zero) and        VOX On >0 for VOX", pttPin, &pttPin, true);
             menu1[5][1] = String(pttPin);
             menuHeader("AX.25 Menu", mStart, mEnd, 5, menu1  );
+            break;
+          case 6:
+            mNumChoice(SQUELCH , &TimeZone , 0, 1000, squelch , String("Squelch Threshold"), "Squelch (0 - 1000)  0 (zero) for off", squelch, &squelch, true);
+            menu1[6][1] = String(squelch);
+            menuHeader("AX.25 Menu", mStart, mEnd, 6, menu1  );
             break;
         } // switch end
       }   // if (pushbutton.update())
@@ -603,10 +638,10 @@ void sbMenu()
       Serial.printf("mPick: %i, mB4: %i\n\r", mPick, mB4);
       tft.setCursor(0, (mB4 + 1) * 25);
       tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
-      tft.print(menu1[mB4][0]+menu1[mB4][1]);
+      tft.print(menu1[mB4][0] + menu1[mB4][1]);
       tft.setCursor(0, (mPick + 1) * 25);
       tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
-      tft.print(menu1[mPick][0]+menu1[mPick][1]);
+      tft.print(menu1[mPick][0] + menu1[mPick][1]);
       tft.setTextColor(ILI9341_WHITE, ILI9341_BLUE);
       mB4 = mPick;
     }
@@ -623,10 +658,10 @@ void sbMenu()
               sTime = EEPROM.readInt(XMIT_TIME); // seconds
               dTime = sTime * 1000; // store the start time into dTime (delay) in milliseconds
               timeOfAPRS = millis();
-              menu1[1][1]    = "Disabled";
+              menu1[1][0]    = "Disabled";
             }
             else {
-              menu1[1][1]     = "Ensabled";
+              menu1[1][0]     = "Ensabled";
             }
             menuHeader("SB Menu", mStart, mEnd, 1, menu1  );
             break;
@@ -742,9 +777,9 @@ void packetMenu(const PathAddress *  paths)
             dTime = sTime * 1000;
             menu1[2][1] = String(sTime);
             menuHeader("Packet Menu", mStart, mEnd, 2, menu1  );
-            break; 
+            break;
           case 3:
-            mCommChoice(MY_CALL,"My Call", sCall, callAlpha, strlen(callAlpha),7,0) ;
+            mCommChoice(MY_CALL, "My Call", sCall, callAlpha, strlen(callAlpha), 7, 0) ;
             menu1[3][0] = paths[1].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 3, menu1  );
             break;
@@ -754,7 +789,7 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 4, menu1  );
             break;
           case 5:
-            mCommChoice(DEST_CALL,"Dest. Call", dCall, callAlpha, strlen(callAlpha),7,0) ;
+            mCommChoice(DEST_CALL, "Dest. Call", dCall, callAlpha, strlen(callAlpha), 7, 0) ;
             menu1[5][0] = paths[0].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 5, menu1  );
             break;
@@ -769,9 +804,9 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 7, menu1  );
             break;
           case 8: // this will do the message
-            mCommChoice(COMMENT,"Comment:", myComment, commAlpha, strlen(commAlpha),35,3) ;
+            mCommChoice(COMMENT, "Comment:", myComment, commAlpha, strlen(commAlpha), 35, 3) ;
             menuHeader("Packet Menu", mStart, mEnd, 8, menu1  );
-            break; 
+            break;
         } // switch end
       }   // if (pushbutton.update())
     }     // if (pushbutton.fallingEdge())
@@ -927,7 +962,9 @@ void mNumChoice(int eePromAddress
       tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
       tft.setCursor(100, 75);
       tft.print(nTZ);
+
     }
+   
   }
   delay(1000);
   tft.fillScreen(ILI9341_BLUE);
@@ -1175,6 +1212,17 @@ void broadcastLocation(GPS &gps, const char *bcomment)
   Serial.print(symbol);
   Serial.println();
   // Send the packet
+  int squ = squelcher();
+  uint8_t squCount = 0;
+  while (squelch != 0 && squ > squelch && squCount++ < 50){
+      //check the audio / squelch if it is busy. 
+      //sqCount is a 5 second safety
+      squ = squelcher();
+      Serial.print(squCount);
+      Serial.print(" : ");
+      Serial.println(squ);
+      
+  }
   aprs_send(addresses, nAddresses
             , gps.day, gps.hour, gps.minute
             , gps.latitude, gps.longitude // degrees
@@ -1189,7 +1237,7 @@ void broadcastLocation(GPS &gps, const char *bcomment)
 }
 
 ///////////////////////////////////////////////////////////////////// mCommChoice()
-void mCommChoice(int eePromAddress,String title, char *vnow, char * alpha, int alength,int vNowLength,int rotation) {
+void mCommChoice(int eePromAddress, String title, char *vnow, char * alpha, int alength, int vNowLength, int rotation) {
   /*
    * Menu choice for the alpha numeric fields sucha as the call signs and comments....
    *
@@ -1230,7 +1278,7 @@ void mCommChoice(int eePromAddress,String title, char *vnow, char * alpha, int a
   }
   // this is the loop() for the comment editor
   while (true) {
-    unsigned char result = rotary_process(); ////////////////////////rotated //////////////////////////////////
+    unsigned char result = rotary_process(); ////////rotated
     if (result) {
       if (result == DIR_CCW) {
         --nLetter;
@@ -1289,20 +1337,20 @@ void mCommChoice(int eePromAddress,String title, char *vnow, char * alpha, int a
 
         if (nLetter < 0) nLetter = vNowLength - 1;
         if (nLetter > vNowLength) nLetter = 0;
-        mDispComment(nLetter, cNew, white,vNowLength);
+        mDispComment(nLetter, cNew, white, vNowLength);
       }
       else {
-        mDispComment(nLetter, cNew, white,vNowLength);
+        mDispComment(nLetter, cNew, white, vNowLength);
       }     // else
     }       // if result end
-    if (pushbutton.update()) {                ////////////////////////////// button pushed //////////////////////////////////
+    if (pushbutton.update()) { //////////////////////// button pushed
       if (pushbutton.fallingEdge()) {
         for (int i = 0; i < alength; i++) { // find the letter under pb in alpha
           if (cNew[nLetter] == alpha[i]) {
             letter = i; // found it, set the letter to is and get out of the for loop
           }
         }
-        mDispComment(nLetter, cNew, yellow,vNowLength);
+        mDispComment(nLetter, cNew, yellow, vNowLength);
         while (true) {
           unsigned char result = rotary_process(); // rotated?
           if (result) {
@@ -1315,7 +1363,7 @@ void mCommChoice(int eePromAddress,String title, char *vnow, char * alpha, int a
               if (letter > alength) letter = 0;
             }
             cNew[nLetter] = alpha[letter];        // put the new letter into the cNew string
-            mDispComment(nLetter, cNew, yellow,vNowLength); // display it
+            mDispComment(nLetter, cNew, yellow, vNowLength); // display it
           }  // if rotated result
 
           if (pushbutton.update()) {     // button pushed
@@ -1329,7 +1377,7 @@ void mCommChoice(int eePromAddress,String title, char *vnow, char * alpha, int a
   }          // While true loop
 }            // mMessChoice()
 
-void mDispComment(int nLetter, char *cNew, uint16_t color,int vNowLength) {
+void mDispComment(int nLetter, char *cNew, uint16_t color, int vNowLength) {
   tft.setCursor(0, 125);
   tft.setTextColor(ILI9341_BLUE, ILI9341_WHITE);
   for (int i = 0; i < vNowLength; i++) {
