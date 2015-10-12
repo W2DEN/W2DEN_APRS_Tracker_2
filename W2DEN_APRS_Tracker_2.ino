@@ -226,7 +226,7 @@ void setup()
   pinMode(TFT_ONOFF_PIN, OUTPUT);
   digitalWrite(TFT_ONOFF_PIN, 1); /// this is the TFT display On Off set to on for boot
   tft.fillScreen(ILI9341_BLACK);
-  tft.setRotation(0);
+  tft.setRotation(2);
   tft.setCursor(0, 250);
   tft.setTextSize(2);
   if (tftOnOff) {
