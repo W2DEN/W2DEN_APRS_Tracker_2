@@ -779,7 +779,7 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 2, menu1  );
             break;
           case 3:
-            mCommChoice(MY_CALL, "My Call", sCall, callAlpha, strlen(callAlpha), 7, 0) ;
+            mCommChoice(MY_CALL, "My Call", sCall, callAlpha, strlen(callAlpha), 7, 2) ;
             menu1[3][0] = paths[1].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 3, menu1  );
             break;
@@ -789,7 +789,7 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 4, menu1  );
             break;
           case 5:
-            mCommChoice(DEST_CALL, "Dest. Call", dCall, callAlpha, strlen(callAlpha), 7, 0) ;
+            mCommChoice(DEST_CALL, "Dest. Call", dCall, callAlpha, strlen(callAlpha), 7, 2) ;
             menu1[5][0] = paths[0].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 5, menu1  );
             break;
@@ -1316,7 +1316,7 @@ void mCommChoice(int eePromAddress, String title, char *vnow, char * alpha, int 
                   tft.print( "         " );
                   break; //breaks the switch
                 case 1: // exit
-                  tft.setRotation(0);
+                  tft.setRotation(2);
                   tft.fillScreen(ILI9341_BLACK);
                   display();
                   return;
@@ -1325,7 +1325,7 @@ void mCommChoice(int eePromAddress, String title, char *vnow, char * alpha, int 
                   for (int i = 0; i < vNowLength; i++) {
                     EEPROM.update(eePromAddress + i, char(vnow[i]));
                   }
-                  tft.setRotation(0);
+                  tft.setRotation(2);
                   tft.fillScreen(ILI9341_BLACK);
                   display();
                   return;
