@@ -1,7 +1,11 @@
 /*
 * This is W2DEN's attempt at a Teensy3.1 APRS Tracker.
-* This is V 2.02 adding a menu system to allow user input.
+* This is V 2.03 adding a menu system to allow user input.
 * see N4SER.org for details
+* 
+* Debugging: 
+*   All serial.print lines have been remed out. //Serial.print. Un rem to use
+*   Incuding the initiator line in Setup //Serial.begin(9600);
 *
 * Compiler Macro Substitutes (#define) in ALL_CAPS with underline for spaces
 *
@@ -15,11 +19,12 @@
     BeRTOS Project ...
     Jinseok Jeon (JeonLab.wordpress.com): UTC calculator
     The APRS libraries come from the Trackduino project with modes by many before it got here.
+Special mention goe to Jan Volschenk (ZS6VOL) who actuall built a W2DEN Tracker and helped me debug this code.
 *
 ********************************************************************
 *
 */
-#define thisver "2.02" ////////////////////////////////// VERSION
+#define thisver "2.03" ////////////////////////////////// VERSION
 // these define the starting EEPROM addresses.
 // easier to change these than dig for the constants.
 #define UTC_OFFSET 1
@@ -130,8 +135,8 @@ struct PathAddress addresses[] = {
 //
 int8_t TimeZone;    // utc offseti
 uint16_t sTime;      // xmit delay if no smart beacon
-char sCall[7];      // holds the s source call
-char dCall[7];      // holds the d destination call
+char sCall[6];      // holds the s source call
+char dCall[6];      // holds the d destination call
 char buf;           // buffer for EEPROM read
 char symTable;      // symbole table \ or //
 char symbol;        // symbol > car etc/
@@ -182,7 +187,7 @@ bool gotGPS = false;
 ////////////////////////////////////////////////////////////////////////
 void setup()
 {
-  Serial.begin(9600); // For debugging output over the USB port
+  //Serial.begin(9600); // For debugging output over the USB port
   // read the EEPROM user data into memory /// will be updated/////////
   /////////////////////////////////////////////////////////////////////
   TimeZone = EEPROM.read(UTC_OFFSET);
@@ -190,12 +195,12 @@ void setup()
   // dTime is the working xmit delay uint32_t starts as sTime then via SmartBeacon if activated.
   sTime = EEPROM.readInt(XMIT_TIME); // seconds
   dTime = sTime * 1000; // store the start time into dTime (delay) in milliseconds
-  for (int i = MY_CALL; i < MY_CALL + 7; i++) { // Source call
+  for (int i = MY_CALL; i < MY_CALL + 6; i++) { // Source call
     buf = EEPROM.read(i);
     if (buf == 32) break;
     sCall[i - MY_CALL] = buf;
   }
-  for (int i = DEST_CALL; i < DEST_CALL + 7; i++) { //destinationn call
+  for (int i = DEST_CALL; i < DEST_CALL + 6; i++) { //destinationn call
     buf = EEPROM.read(i);
     if (buf == 32) break;
     dCall[i - DEST_CALL] = buf;
@@ -222,6 +227,7 @@ void setup()
   pttPin         = EEPROM.readInt(PTT_PIN);      // PTT Teensy Pin usually 13, 0 for off
   tftOnOff       = EEPROM.read(TFT_ONOFF);       // tft On / Off: 1 or 0
   squelch        = EEPROM.readInt(SQUELCH);      // read ssquelch threshold from eePROM into variable
+  /////////////////////////////////////////////////////////////////////////////////////////////////////
   tft.begin();
   pinMode(TFT_ONOFF_PIN, OUTPUT);
   digitalWrite(TFT_ONOFF_PIN, 1); /// this is the TFT display On Off set to on for boot
@@ -258,11 +264,11 @@ void setup()
   char rot[9] = {'|', '/', (char)195, '\\', '|', '/', (char)195, '\\'};
   uint i = 0;
   while (gps.month <= 0 || gps.day <= 0 || gps.year <= 0) { // || gps.speed > 0) {
-    Serial.print( gps.month);
-    Serial.print( "/");
-    Serial.print( gps.day);
-    Serial.print( "/");
-    Serial.println( gps.year);
+    //Serial.print( gps.month);
+    //Serial.print( "/");
+    //Serial.print( gps.day);
+    //Serial.print( "/");
+    //Serial.println( gps.year);
     if (gps.sentenceAvailable()) gps.parseSentence();
     if (gps.newValuesSinceDataRead()) gps.dataRead();
     tft.setCursor(0, 150);
@@ -286,6 +292,9 @@ void setup()
   digitalWrite(TFT_ONOFF_PIN, tftOnOff); /// this is the TFT display controller set to 255 on boot
   tft.fillScreen(ILI9341_BLACK);
   display();
+  //eepromReader(); // for debugging: prints eeprom content t serial monitor 
+  //Serial.printf("mPick: %i, mB4: %i\n\r", " mPick", " mB4");
+
 }
 
 ////////////////////////////////////////////////////////////////////// loop()
@@ -293,6 +302,7 @@ void loop()
 {
   // capture the button press
   if (pushbutton.update()) {
+    //Serial.println("Button");
     if (pushbutton.fallingEdge()) {
       digitalWrite(TFT_ONOFF_PIN, 1); //Turn the screen on if it was off
       menu(addresses);
@@ -305,7 +315,7 @@ void loop()
     displayCountDown();
     gps.dataRead();
     gotGPS = true; // prior validate idea... on the to do list
-    if (sbEnable) {     
+    if (sbEnable) {
       mySpeed   = round(gps.speed * knotToMPH); // convert knots to MPH and store.
       myHeading = round(gps.heading);           // store the heading
       // SmartBeacon... my way
@@ -333,7 +343,7 @@ void loop()
             sbHeading = myHeading;
           }
           else {
-            Serial.println("not enuf time... reset");
+            //Serial.println("not enuf time... reset");
             sbHeading = myHeading;              //not enough time so reset the heading and move on
           }
         }
@@ -370,8 +380,28 @@ void loop()
 //                                                                         //
 /////////////////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////// eepromReader()
+// for debugging prints eeprom content to serial monitor
+void eepromReader() {
+  unsigned int address = 0;
+  byte value;
+  Serial.print("EEPROM Content");
+  Serial.println();
+  while (address < 100) {
+    // read a byte from the current address of the EEPROM
+    value = EEPROM.read(address);
 
-
+    Serial.print(address);
+    Serial.print("\t");
+    Serial.print(value, DEC);
+    if (value > 30 and value < 240) {
+      Serial.print("\t");
+      Serial.print(char(value));
+    }
+    Serial.println();
+    address = address + 1;
+  }
+}
 
 /////////////////////////////////////////////////////////////////////// squelcher()
 // returns the integer value on the SQUEL_PIN
@@ -779,7 +809,7 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 2, menu1  );
             break;
           case 3:
-            mCommChoice(MY_CALL, "My Call", sCall, callAlpha, strlen(callAlpha), 7, 2) ;
+            mCommChoice(MY_CALL, "My Call", sCall, callAlpha, strlen(callAlpha), 6, 2) ;
             menu1[3][0] = paths[1].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 3, menu1  );
             break;
@@ -789,7 +819,7 @@ void packetMenu(const PathAddress *  paths)
             menuHeader("Packet Menu", mStart, mEnd, 4, menu1  );
             break;
           case 5:
-            mCommChoice(DEST_CALL, "Dest. Call", dCall, callAlpha, strlen(callAlpha), 7, 2) ;
+            mCommChoice(DEST_CALL, "Dest. Call", dCall, callAlpha, strlen(callAlpha), 6, 2) ;
             menu1[5][0] = paths[0].callsign;
             menuHeader("Packet Menu", mStart, mEnd, 5, menu1  );
             break;
@@ -840,15 +870,15 @@ void mSymChoice(String title, String sNameNow, int sNumNow  ) {
     if (pushbutton.update()) {                // button pushed
       if (pushbutton.fallingEdge()) {
         if (sNumNew != sNumNow) {      // we have a new symbol to save
-          Serial.print(symbols[sNumNew][1]);
-          Serial.print(symbols[sNumNew][2]);
-          Serial.println(symbols[sNumNew][0]);
+          //Serial.print(symbols[sNumNew][1]);
+          //Serial.print(symbols[sNumNew][2]);
+          //Serial.println(symbols[sNumNew][0]);
           EEPROM.update(SYM_TABLE, symbols[sNumNew][1][0]);
           EEPROM.update(SYMBOL, symbols[sNumNew][2][0]);
           symTable = symbols[sNumNew][1][0];
           symbol = symbols[sNumNew][2][0];
-          Serial.println(symTable);
-          Serial.print(symbol);
+          //Serial.println(symTable);
+          //Serial.print(symbol);
         }
         tft.fillScreen(ILI9341_BLUE);
         // display();
@@ -964,7 +994,7 @@ void mNumChoice(int eePromAddress
       tft.print(nTZ);
 
     }
-   
+
   }
   delay(1000);
   tft.fillScreen(ILI9341_BLUE);
@@ -1197,31 +1227,31 @@ void broadcastLocation(GPS &gps, const char *bcomment)
     addresses[3].ssid = 2;
   }
   // For debugging print out the path
-  Serial.print("APRS(");
-  Serial.print(nAddresses);
-  Serial.print("): ");
-  for (int i = 0; i < nAddresses; i++) {
-    Serial.print(addresses[i].callsign);
-    Serial.print('-');
-    Serial.print(addresses[i].ssid);
-    if (i < nAddresses - 1)
-      Serial.print(',');
-  }
-  Serial.print(' ');
-  Serial.print(symTable);
-  Serial.print(symbol);
-  Serial.println();
+//  Serial.print("APRS(");
+//  Serial.print(nAddresses);
+//  Serial.print("): ");
+//  for (int i = 0; i < nAddresses; i++) {
+//    Serial.print(addresses[i].callsign);
+//    Serial.print('-');
+//    Serial.print(addresses[i].ssid);
+//    if (i < nAddresses - 1)
+//      Serial.print(',');
+//  }
+//  Serial.print(' ');
+//  Serial.print(symTable);
+//  Serial.print(symbol);
+//  Serial.println();
   // Send the packet
   int squ = squelcher();
   uint8_t squCount = 0;
-  while (squelch != 0 && squ > squelch && squCount++ < 50){
-      //check the audio / squelch if it is busy. 
-      //sqCount is a 5 second safety
-      squ = squelcher();
-      Serial.print(squCount);
-      Serial.print(" : ");
-      Serial.println(squ);
-      
+  while (squelch != 0 && squ > squelch && squCount++ < 50) {
+    //check the audio / squelch if it is busy.
+    //sqCount is a 5 second safety
+    squ = squelcher();
+    //Serial.print(squCount);
+    //Serial.print(" : ");
+    //Serial.println(squ);
+
   }
   aprs_send(addresses, nAddresses
             , gps.day, gps.hour, gps.minute
